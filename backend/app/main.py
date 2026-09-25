@@ -2,22 +2,29 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import os
+from zipfile import ZipFile, BadZipFile
 
 from docx import Document
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response, FileResponse
+from fastapi.staticfiles import StaticFiles
+from .content import Content, GenerateRequest, ReviseRequest
+from . import ai
+from .exports import export_docx, export_pptx, format_docx
 from openpyxl import load_workbook
 from pptx import Presentation
 
 app = FastAPI(
     title="MAGHRABI Office Studio API",
-    version="0.1.0",
+    version="0.2.0",
     description="Document analysis and formatting engine for DOCX, XLSX and PPTX files.",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if origin.strip()],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,8 +38,10 @@ SUPPORTED = {
 
 
 @app.get("/")
-def root() -> dict[str, str]:
-    return {"name": "MAGHRABI Office Studio API", "status": "online", "version": "0.1.0"}
+def root():
+    if (FRONTEND / "index.html").is_file():
+        return FileResponse(FRONTEND / "index.html")
+    return {"name": "MAGHRABI Office Studio API", "status": "online", "version": "0.2.0"}
 
 
 @app.get("/health")
@@ -68,7 +77,9 @@ def analyze_xlsx(data: bytes) -> dict:
             "rows": sheet.max_row,
             "columns": sheet.max_column,
         })
-    return {"worksheets": len(workbook.worksheets), "sheets": sheets}
+    result = {"worksheets": len(workbook.worksheets), "sheets": sheets}
+    workbook.close()
+    return result
 
 
 def analyze_pptx(data: bytes) -> dict:
@@ -100,9 +111,7 @@ async def analyze_file(file: UploadFile = File(...)) -> dict:
     if not document_type:
         raise HTTPException(status_code=415, detail="Unsupported file type. Use DOCX, XLSX or PPTX.")
 
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+    data = await read_office(file)
 
     try:
         if extension == ".docx":
@@ -112,17 +121,91 @@ async def analyze_file(file: UploadFile = File(...)) -> dict:
         else:
             metrics = analyze_pptx(data)
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Could not parse Office file: {exc}") from exc
+        raise HTTPException(status_code=422, detail="تعذر قراءة الملف. تأكد من أنه ملف Office صالح وغير محمي بكلمة مرور.") from exc
 
     return {
         "filename": filename,
         "type": document_type,
         "size_bytes": len(data),
         "status": "analyzed",
-        "health_score": 70,
+        "health_score": None,
         "metrics": metrics,
-        "issues": [
-            "Formatting health rules will be expanded in V0.2",
-            "Automatic repair engine is not enabled yet",
-        ],
+        "issues": [],
+        "analysis_note": "النتائج إحصاءات فعلية للمحتوى؛ لا تمثل تقييمًا شاملًا لجودة التنسيق.",
     }
+
+
+MAX_UPLOAD = 10 * 1024 * 1024
+FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+async def read_office(file: UploadFile) -> bytes:
+    data = await file.read(MAX_UPLOAD + 1)
+    if not data:
+        raise HTTPException(400, "الملف فارغ.")
+    if len(data) > MAX_UPLOAD:
+        raise HTTPException(413, "حجم الملف يتجاوز 10 ميجابايت.")
+    try:
+        with ZipFile(BytesIO(data)) as archive:
+            entries = archive.infolist()
+            if len(entries) > 2000 or sum(e.file_size for e in entries) > 64 * 1024 * 1024:
+                raise HTTPException(413, "محتوى الملف أكبر من الحد المسموح للمعالجة.")
+            if any(e.flag_bits & 1 for e in entries):
+                raise HTTPException(422, "الملفات المشفرة غير مدعومة.")
+    except BadZipFile as exc:
+        raise HTTPException(422, "الملف ليس ملف Office صالحًا.") from exc
+    return data
+
+
+def download(data: bytes, kind: str, filename: str):
+    mime = {
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    }[kind]
+    return Response(data, media_type=mime, headers={
+        'Content-Disposition': f'attachment; filename="{filename}.{kind}"',
+        'Cache-Control': 'no-store',
+    })
+
+
+@app.get('/api/v1/ai/status')
+def ai_status():
+    return ai.status()
+
+
+@app.post('/api/v1/ai/generate', response_model=Content)
+def generate_content(request: GenerateRequest, authorization: str | None = Header(default=None)):
+    ai.authorize(authorization)
+    return ai.generate(request)
+
+
+@app.post('/api/v1/ai/revise', response_model=Content)
+def revise_content(request: ReviseRequest, authorization: str | None = Header(default=None)):
+    ai.authorize(authorization)
+    return ai.revise(request)
+
+
+@app.post('/api/v1/exports/docx')
+def docx_export(content: Content):
+    return download(export_docx(content), 'docx', 'MAGHRABI-document')
+
+
+@app.post('/api/v1/exports/pptx')
+def pptx_export(content: Content):
+    return download(export_pptx(content), 'pptx', 'MAGHRABI-presentation')
+
+
+@app.post('/api/v1/files/format-docx')
+async def format_uploaded_docx(file: UploadFile = File(...)):
+    if Path(file.filename or '').suffix.lower() != '.docx':
+        raise HTTPException(415, "تنسيق المستندات يدعم DOCX فقط في هذه النسخة.")
+    data = await read_office(file)
+    try:
+        return download(format_docx(data), 'docx', 'MAGHRABI-formatted')
+    except Exception as exc:
+        raise HTTPException(422, "تعذر تنسيق الملف. تأكد من صلاحية ملف Word.") from exc
+
+
+# One Railway service serves the built React app and API on the same origin.
+if (FRONTEND / 'assets').is_dir():
+    app.mount('/assets', StaticFiles(directory=FRONTEND / 'assets'), name='assets')

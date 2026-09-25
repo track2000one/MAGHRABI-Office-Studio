@@ -1,13 +1,11 @@
 {
   "name": "maghrabi-office-studio",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "scripts": {
-    "build": "npm --prefix frontend install --include=dev && npm --prefix frontend run build",
-    "start": "serve -s frontend/dist -l tcp://0.0.0.0:$PORT"
-  },
-  "dependencies": {
-    "serve": "^14.2.4"
+    "build": "npm --prefix frontend ci --include=dev && npm --prefix frontend run build",
+    "start": "python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port ${PORT:-8000}",
+    "test": "npm --prefix frontend test"
   },
   "engines": {
     "node": ">=22.12.0"
