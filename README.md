@@ -1,56 +1,62 @@
 # MAGHRABI Office Studio
 
-منصة احترافية لمعالجة وتنسيق ملفات Microsoft Office، مبنية بواجهة React + Vite + TypeScript + Tailwind ومحرك Backend باستخدام FastAPI/Python.
+منصة عربية لإنشاء وتحرير وتصدير المحتوى إلى Word وPowerPoint وتحليل ملفات Office.
 
-## Vision
+## النسخة 0.2
 
-منصة موحدة لرفع ملفات Word وExcel وPowerPoint، تحليل جودة التنسيق، تطبيق تحسينات تلقائية أو يدوية، ثم تصدير نسخة محسنة مع دعم قوي للعربية وRTL.
+- موضوع → مخطط قابل لإعادة الترتيب والتعديل → محتوى كامل → مراجعة وتصدير.
+- تعديل المحتوى بأوامر الذكاء الاصطناعي والتراجع عن آخر نتيجة.
+- محرر يدوي ومثال توضيحي يعملان دون مفتاح ذكاء اصطناعي.
+- تصدير DOCX وPPTX قابلين للتحرير، واتجاه عربي RTL وملاحظات للمتحدث.
+- تقسيم النصوص الطويلة على شرائح إضافية؛ عدد المحاور لا يشمل الغلاف أو شرائح الاستكمال.
+- رفع DOCX/XLSX/PPTX لتحليل المحتوى الفعلي، دون درجات جودة ثابتة أو ملفات وهمية.
+- تنسيق أولي لفقرات Word العربية: الخط، اتجاه الفقرة والمحاذاة والتباعد، مع الإبقاء على النص والجداول والرسومات المضمنة.
+- حفظ نسخ المشاريع محليًا عند طلب المستخدم؛ حتى 15 نسخة على المتصفح نفسه دون حذف تلقائي للنسخ السابقة. يشمل الحفظ النص المرجعي المستخدم.
 
-## Planned capabilities
+لا تدعم هذه النسخة بحث الويب، صورًا مولدة، تحريرًا تعاونيًا، تخزينًا سحابيًا، أو إصلاح تنسيق Excel/PowerPoint المرفوع. الاعتماد على المصادر يتيح لصق نص مرجعي. المعاينة داخل الصفحة تقريبية؛ راجع ملف Office النهائي قبل استخدامه.
 
-- Word DOCX formatting and document health checks
-- Excel XLSX table styling and print preparation
-- PowerPoint PPTX presentation cleanup and consistency checks
-- Arabic RTL/LTR support
-- Corporate formatting templates
-- Before/after document review
-- Version history
-- Batch processing
-- AI-assisted formatting commands
-- Railway deployment
+## التشغيل المحلي
 
-## Stack
+المتطلبات: Node.js 24 وPython 3.12.
 
-### Frontend
-- React
-- Vite
-- TypeScript
-- Tailwind CSS
-
-### Backend
-- FastAPI
-- Python
-- python-docx
-- openpyxl
-- python-pptx
-- OOXML utilities
-
-### Infrastructure
-- PostgreSQL
-- Redis (planned for background jobs)
-- Railway
-- GitHub
-
-## Repository structure
-
-```text
-MAGHRABI-Office-Studio/
-├── frontend/
-├── backend/
-├── .gitignore
-└── README.md
+```bash
+python -m venv .venv
+. .venv/bin/activate
+pip install -r backend/requirements-dev.txt
+npm --prefix frontend ci
+npm --prefix frontend run build
+uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 ```
 
-## Development status
+افتح `http://localhost:8000`. للتطوير، شغّل أيضًا `npm --prefix frontend run dev`؛ يمرّر Vite طلبات `/api` إلى المنفذ 8000.
 
-V0.1 — initial project scaffold.
+## تفعيل الذكاء الاصطناعي
+
+ضع المتغيرات التالية في بيئة الخادم أو Railway:
+
+| المتغير | الغرض |
+|---|---|
+| `OPENAI_API_KEY` | مفتاح المزود، يبقى على الخادم فقط |
+| `OPENAI_MODEL` | نموذج يدعم Chat Completions وStrict Structured Outputs |
+| `STUDIO_ACCESS_TOKEN` | رمز خاص طويل وعشوائي للدخول إلى وظائف التوليد المدفوعة |
+| `CORS_ORIGINS` | اختياري عند فصل الواجهة عن الخادم؛ قائمة نطاقات مفصولة بفواصل |
+
+أدخل **رمز الوصول للمنصة** في شاشة إعدادات الاتصال؛ لا تدخل مفتاح OpenAI في الواجهة. يبقى الرمز في ذاكرة الصفحة فقط. لا تُقرأ ملفات `.env` تلقائيًا؛ صدّر المتغيرات في البيئة أو استخدم إعدادات Railway.
+
+لا تتظاهر المنصة بالتوليد عند غياب الإعدادات. يتطلب التوليد المتغيرات الثلاثة، وتبقى المعاينة اليدوية والتحليل والتصدير متاحة دونها. استدعاءات المزود لها مهلة 90 ثانية وحد أقصى طلبان متزامنان لكل عملية خادم. استخدام API يخضع لحساب المزود؛ هذه النسخة تستخدم رمزًا مشتركًا، وليس نظام حسابات وصلاحيات للمؤسسات.
+
+مرجع الربط: [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+## نشر Railway
+
+يستخدم `railway.json` الجذري ملف `Dockerfile` لبناء React ثم تشغيل FastAPI الذي يخدم الواجهة وAPI من أصل واحد. راجع [دليل النشر](docs/DEPLOYMENT.md) قبل الدمج في الفرع المرتبط بالنشر.
+
+## الاختبارات
+
+```bash
+PYTHONPATH=backend .venv/bin/pytest backend/tests -q
+npm --prefix frontend test
+npm --prefix frontend run build
+```
+
+اختبارات المزود تستخدم HTTP محاكى دون تكلفة أو مفاتيح حقيقية. يلزم اختبار توليد حي بعد ضبط إعدادات المزود. لا تُرفع الملفات الأصلية إلى مزود الذكاء الاصطناعي عبر وظيفة التحليل؛ يُرسل نص المرجع أو المحتوى فقط عند طلب التوليد/التعديل.
