@@ -12,6 +12,7 @@ type Analysis = {
 };
 type Project = { id: string; date: string; content: Content; context?: Pick<RequestSettings, "source_mode" | "reference_text"> };
 const STORAGE = "maghrabi-office-projects-v1";
+const ACCESS_TOKEN_SESSION = "maghrabi-office-access-token-v1";
 const initial: RequestSettings = {
   topic: "",
   audience: "فريق العمل والإدارة",
@@ -95,7 +96,7 @@ export default function App() {
   const [status, setStatus] = useState<
     "loading" | "ready" | "unconfigured" | "offline"
   >("loading");
-  const [token, setToken] = useState("");
+  const [token, setToken] = useState(() => sessionStorage.getItem(ACCESS_TOKEN_SESSION) || "");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -1281,12 +1282,17 @@ export default function App() {
                 type="password"
                 autoComplete="off"
                 value={token}
-                onChange={(e) => setToken(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setToken(next);
+                  if (next) sessionStorage.setItem(ACCESS_TOKEN_SESSION, next);
+                  else sessionStorage.removeItem(ACCESS_TOKEN_SESSION);
+                }}
                 placeholder="رمز الوصول الذي حدده مسؤول المنصة"
               />
             </label>
             <p className="muted">
-              يبقى الرمز في ذاكرة هذه الصفحة فقط ويُمسح عند إغلاقها أو تحديثها.
+              يبقى الرمز لهذه علامة التبويب ويستمر بعد تحديث الصفحة، ويُمسح عند إغلاق علامة التبويب.
             </p>
             <p className="muted small">
               يُضبط مفتاح مزود الذكاء الاصطناعي في الخادم. لا تضع مفتاح المزود
