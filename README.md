@@ -32,20 +32,25 @@ uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000
 
 ## تفعيل الذكاء الاصطناعي
 
+المنصة تدعم **Google Gemini** كمزود أساسي، مع إبقاء OpenAI كخيار احتياطي اختياري.
+
 ضع المتغيرات التالية في بيئة الخادم أو Railway:
 
 | المتغير | الغرض |
 |---|---|
-| `OPENAI_API_KEY` | مفتاح المزود، يبقى على الخادم فقط |
-| `OPENAI_MODEL` | نموذج يدعم Chat Completions وStrict Structured Outputs |
+| `AI_PROVIDER` | ضع `gemini` لاستخدام Google أو `openai` لاستخدام OpenAI |
+| `GEMINI_API_KEY` | مفتاح Gemini من Google AI Studio، يبقى على الخادم فقط |
+| `GEMINI_MODEL` | اسم نموذج Gemini؛ مثال `gemini-3.8-flash` |
+| `OPENAI_API_KEY` | اختياري؛ مفتاح OpenAI عند استخدام المزود القديم |
+| `OPENAI_MODEL` | اختياري؛ نموذج OpenAI |
 | `STUDIO_ACCESS_TOKEN` | رمز خاص طويل وعشوائي للدخول إلى وظائف التوليد المدفوعة |
 | `CORS_ORIGINS` | اختياري عند فصل الواجهة عن الخادم؛ قائمة نطاقات مفصولة بفواصل |
 
-أدخل **رمز الوصول للمنصة** في شاشة إعدادات الاتصال؛ لا تدخل مفتاح OpenAI في الواجهة. يبقى الرمز في ذاكرة الصفحة فقط. لا تُقرأ ملفات `.env` تلقائيًا؛ صدّر المتغيرات في البيئة أو استخدم إعدادات Railway.
+أدخل **رمز الوصول للمنصة** في شاشة إعدادات الاتصال؛ لا تدخل مفتاح Gemini أو OpenAI في الواجهة. المفاتيح تبقى في Railway/الخادم فقط. لا تُقرأ ملفات `.env` تلقائيًا؛ صدّر المتغيرات في البيئة أو استخدم إعدادات Railway.
 
-لا تتظاهر المنصة بالتوليد عند غياب الإعدادات. يتطلب التوليد المتغيرات الثلاثة، وتبقى المعاينة اليدوية والتحليل والتصدير متاحة دونها. استدعاءات المزود لها مهلة 90 ثانية وحد أقصى طلبان متزامنان لكل عملية خادم. استخدام API يخضع لحساب المزود؛ هذه النسخة تستخدم رمزًا مشتركًا، وليس نظام حسابات وصلاحيات للمؤسسات.
+عند ضبط `GEMINI_API_KEY` و`GEMINI_MODEL` و`STUDIO_ACCESS_TOKEN` سيظهر زر التوليد كخدمة مفعلة. وإذا لم تحدد `AI_PROVIDER` تختار المنصة Gemini أولًا عند توفر إعداداته، ثم OpenAI كخيار احتياطي. استدعاءات المزود لها مهلة 90 ثانية وحد أقصى طلبان متزامنان لكل عملية خادم.
 
-مرجع الربط: [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+مرجع الربط: [Gemini Structured Outputs](https://ai.google.dev/gemini-api/docs/generate-content/structured-output).
 
 ## نشر Railway
 
