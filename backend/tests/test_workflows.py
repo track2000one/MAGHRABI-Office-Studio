@@ -73,6 +73,8 @@ def test_formatting_preserves_text_and_tables():
 
 
 def test_unconfigured_ai_is_explicit(monkeypatch):
+    monkeypatch.delenv('GEMINI_API_KEY', raising=False)
+    monkeypatch.delenv('GEMINI_MODEL', raising=False)
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     assert client.get('/api/v1/ai/status').json()['configured'] is False
     response = client.post('/api/v1/ai/generate', json={'topic': 'تحسين الخدمات الجامعية', 'section_count': 4})
@@ -80,8 +82,9 @@ def test_unconfigured_ai_is_explicit(monkeypatch):
 
 
 def test_paid_generation_requires_access_token(monkeypatch):
-    monkeypatch.setenv('OPENAI_API_KEY', 'test-provider-key')
-    monkeypatch.setenv('OPENAI_MODEL', 'test-model')
+    monkeypatch.setenv('AI_PROVIDER', 'gemini')
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-provider-key')
+    monkeypatch.setenv('GEMINI_MODEL', 'test-model')
     monkeypatch.setenv('STUDIO_ACCESS_TOKEN', 'test-access-token')
     response = client.post('/api/v1/ai/generate', json={'topic': 'تحسين الخدمات الجامعية', 'section_count': 4})
     assert response.status_code == 401
@@ -102,15 +105,17 @@ def test_provider_success_and_strict_schema(monkeypatch):
     import httpx
     import json
     from app import ai
-    monkeypatch.setenv('OPENAI_API_KEY', 'test-provider-key')
-    monkeypatch.setenv('OPENAI_MODEL', 'test-model')
+    monkeypatch.setenv('AI_PROVIDER', 'gemini')
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-provider-key')
+    monkeypatch.setenv('GEMINI_MODEL', 'test-model')
     monkeypatch.setenv('STUDIO_ACCESS_TOKEN', 'test-access-token')
     original = httpx.Client
     def handle(request):
         payload = json.loads(request.content)
-        assert payload['response_format']['json_schema']['strict'] is True
-        assert request.headers['authorization'] == 'Bearer test-provider-key'
-        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': json.dumps(CONTENT)}}]})
+        assert payload['generationConfig']['responseFormat']['text']['mimeType'] == 'application/json'
+        assert payload['generationConfig']['responseFormat']['text']['schema']['required'] == ['title', 'summary', 'language', 'sections']
+        assert request.headers['x-goog-api-key'] == 'test-provider-key'
+        return httpx.Response(200, json={'candidates': [{'finishReason': 'STOP', 'content': {'parts': [{'text': json.dumps(CONTENT)}]}}]})
     monkeypatch.setattr(ai.httpx, 'Client', lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs))
     response = client.post('/api/v1/ai/generate', json={'topic': 'تحسين الخدمات', 'section_count': 2}, headers={'Authorization': 'Bearer test-access-token'})
     assert response.status_code == 200
@@ -120,8 +125,9 @@ def test_provider_success_and_strict_schema(monkeypatch):
 def test_provider_error_is_not_exposed_and_no_fake_content(monkeypatch):
     import httpx
     from app import ai
-    monkeypatch.setenv('OPENAI_API_KEY', 'test-provider-key')
-    monkeypatch.setenv('OPENAI_MODEL', 'test-model')
+    monkeypatch.setenv('AI_PROVIDER', 'gemini')
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-provider-key')
+    monkeypatch.setenv('GEMINI_MODEL', 'test-model')
     monkeypatch.setenv('STUDIO_ACCESS_TOKEN', 'test-access-token')
     original = httpx.Client
     monkeypatch.setattr(ai.httpx, 'Client', lambda **kwargs: original(transport=httpx.MockTransport(lambda r: httpx.Response(401, text='secret provider details')), **kwargs))
@@ -132,8 +138,9 @@ def test_provider_error_is_not_exposed_and_no_fake_content(monkeypatch):
 
 
 def test_reference_mode_rejects_missing_source(monkeypatch):
-    monkeypatch.setenv('OPENAI_API_KEY', 'test-provider-key')
-    monkeypatch.setenv('OPENAI_MODEL', 'test-model')
+    monkeypatch.setenv('AI_PROVIDER', 'gemini')
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-provider-key')
+    monkeypatch.setenv('GEMINI_MODEL', 'test-model')
     monkeypatch.setenv('STUDIO_ACCESS_TOKEN', 'test-access-token')
     response = client.post('/api/v1/ai/generate', json={'topic': 'تحسين الخدمات', 'source_mode': 'reference'}, headers={'Authorization': 'Bearer test-access-token'})
     assert response.status_code == 422
@@ -161,8 +168,9 @@ def test_rtl_alignment_uses_logical_start_for_word_and_libreoffice():
 
 
 def test_revision_reference_mode_rejects_missing_source(monkeypatch):
-    monkeypatch.setenv('OPENAI_API_KEY', 'test-provider-key')
-    monkeypatch.setenv('OPENAI_MODEL', 'test-model')
+    monkeypatch.setenv('AI_PROVIDER', 'gemini')
+    monkeypatch.setenv('GEMINI_API_KEY', 'test-provider-key')
+    monkeypatch.setenv('GEMINI_MODEL', 'test-model')
     monkeypatch.setenv('STUDIO_ACCESS_TOKEN', 'test-access-token')
     response = client.post('/api/v1/ai/revise', json={'content': CONTENT, 'instruction': 'اختصر المحتوى', 'source_mode': 'reference'}, headers={'Authorization': 'Bearer test-access-token'})
     assert response.status_code == 422
