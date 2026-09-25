@@ -7,6 +7,7 @@ import { example } from "../api";
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   vi.stubGlobal(
     "fetch",
     vi.fn(
@@ -145,6 +146,7 @@ describe("Office Studio workflows", () => {
       "الهدف المعدل",
     );
     expect(localStorage.getItem("test-token")).toBeNull();
+    expect(sessionStorage.getItem("maghrabi-office-access-token-v1")).toBe("test-token");
   });
 });
 
@@ -163,4 +165,17 @@ it("never evicts saved projects when the capacity is reached", async () => {
   await user.click(screen.getByRole("button", {name: "حفظ نسخة"}));
   expect(await screen.findByRole("alert")).toHaveTextContent("بلغت الحد الأقصى");
   expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!)).toEqual(saved);
+});
+
+
+it("restores the access token from session storage after a page reload", async () => {
+  sessionStorage.setItem("maghrabi-office-access-token-v1", "saved-session-token");
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(JSON.stringify({ configured: true }), { status: 200 }),
+  );
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByText("الذكاء الاصطناعي متصل");
+  await user.click(screen.getByRole("button", { name: /إعدادات الاتصال/ }));
+  expect(screen.getByLabelText("رمز الوصول للمنصة")).toHaveValue("saved-session-token");
 });
