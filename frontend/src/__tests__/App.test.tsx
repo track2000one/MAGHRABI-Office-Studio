@@ -189,7 +189,7 @@ it("opens PDF Studio and submits page-size editing settings", async () => {
 
   const user = userEvent.setup();
   const { container } = render(<App />);
-  await user.click(screen.getByRole("button", { name: /تحرير PDF/ }));
+  await user.click(screen.getByRole("button", { name: "تحرير PDF", exact: true }));
 
   vi.mocked(fetch).mockResolvedValueOnce(
     new Response(
