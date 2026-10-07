@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom/vitest";
 import App from "../App";
@@ -321,5 +321,92 @@ it("inserts an image into selected PDF pages with placement controls", async () 
     expect(body.get("y_mm")).toBe("35");
     expect(body.get("image_rotation")).toBe("90");
     expect(body.get("overlay")).toBe("false");
+  });
+});
+
+
+it("supports free drag placement of an image over a rendered PDF page", async () => {
+  URL.createObjectURL = vi.fn(() => "blob:visual");
+  URL.revokeObjectURL = vi.fn();
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  const user = userEvent.setup();
+  const { container } = render(<App />);
+  await user.click(screen.getByRole("button", { name: /^تحرير PDF$/ }));
+
+  const analysis = {
+    filename: "sample.pdf",
+    size_bytes: 1200,
+    pages: 1,
+    text_chars: 20,
+    metadata: {},
+    page_sizes: [
+      { page: 1, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+    ],
+    supported_sizes: ["A4", "CUSTOM"],
+  };
+
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(JSON.stringify(analysis), { status: 200 }),
+  );
+  const pdf = new File(["fake-pdf"], "sample.pdf", { type: "application/pdf" });
+  const pdfInput = container.querySelector('input[type="file"][accept*=".pdf"]:not([multiple])') as HTMLInputElement;
+  await user.upload(pdfInput, pdf);
+  await screen.findByText(/1 صفحة/);
+
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(new Blob(["png"], { type: "image/png" }), {
+      status: 200,
+      headers: { "Content-Type": "image/png" },
+    }),
+  );
+  const imageInput = container.querySelector('input[type="file"][accept*=".png"]') as HTMLInputElement;
+  const image = new File(["fake-image"], "logo.png", { type: "image/png" });
+  await user.upload(imageInput, image);
+
+  await waitFor(() => {
+    expect(
+      vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/pdf/render-page")),
+    ).toBe(true);
+  });
+
+  const stage = container.querySelector(".pdf-visual-stage") as HTMLDivElement;
+  Object.defineProperty(stage, "getBoundingClientRect", {
+    value: () => ({
+      width: 420,
+      height: 594,
+      top: 0,
+      left: 0,
+      right: 420,
+      bottom: 594,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }),
+  });
+
+  const overlay = screen.getByTestId("pdf-free-image");
+  fireEvent.pointerDown(overlay, { pointerId: 1, clientX: 40, clientY: 40 });
+  fireEvent.pointerMove(overlay, { pointerId: 1, clientX: 140, clientY: 140 });
+  fireEvent.pointerUp(overlay, { pointerId: 1, clientX: 140, clientY: 140 });
+
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(new Blob(["image-pdf"], { type: "application/pdf" }), {
+      status: 200,
+      headers: { "Content-Type": "application/pdf" },
+    }),
+  );
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(JSON.stringify({ ...analysis, filename: "MAGHRABI-image-inserted.pdf", size_bytes: 1300 }), { status: 200 }),
+  );
+
+  await user.click(screen.getByRole("button", { name: "إدراج الصورة وتنزيل PDF" }));
+  await waitFor(() => {
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/pdf/insert-image"));
+    expect(call).toBeTruthy();
+    const body = call![1]!.body as FormData;
+    expect(body.get("position")).toBe("custom");
+    expect(Number(body.get("x_mm"))).toBeGreaterThan(10);
+    expect(Number(body.get("y_mm"))).toBeGreaterThan(10);
   });
 });
