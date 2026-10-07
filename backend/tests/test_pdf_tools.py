@@ -2,6 +2,7 @@ from io import BytesIO
 
 import pymupdf
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.main import app
 
@@ -16,6 +17,13 @@ def make_pdf(page_sizes=((595, 842), (842, 595)), label="sample") -> bytes:
     data = doc.tobytes()
     doc.close()
     return data
+
+
+def make_png(size=(240, 120)) -> bytes:
+    output = BytesIO()
+    image = Image.new("RGBA", size, (30, 120, 180, 255))
+    image.save(output, format="PNG")
+    return output.getvalue()
 
 
 def test_pdf_analyze_reports_pages_and_sizes():
@@ -114,3 +122,97 @@ def test_pdf_rejects_invalid_page_numbers():
         data={"page_order": "2"},
     )
     assert response.status_code == 422
+
+
+def test_pdf_insert_image_targets_selected_page_and_position():
+    data = make_pdf()
+    image = make_png()
+    response = client.post(
+        "/api/v1/pdf/insert-image",
+        files={
+            "file": ("sample.pdf", data, "application/pdf"),
+            "image": ("logo.png", image, "image/png"),
+        },
+        data={
+            "image_pages": "2",
+            "position": "top_right",
+            "width_mm": "40",
+            "height_mm": "20",
+            "keep_aspect": "true",
+            "opacity": "0.75",
+            "image_rotation": "0",
+            "overlay": "true",
+        },
+    )
+    assert response.status_code == 200
+    edited = pymupdf.open(stream=response.content, filetype="pdf")
+    try:
+        assert len(edited[0].get_images(full=True)) == 0
+        images = edited[1].get_images(full=True)
+        assert len(images) == 1
+        rects = edited[1].get_image_rects(images[0][0])
+        assert rects
+        assert rects[0].x0 > edited[1].rect.width / 2
+        assert rects[0].y0 < edited[1].rect.height / 3
+    finally:
+        edited.close()
+
+
+def test_pdf_insert_image_supports_custom_position_and_full_page_background():
+    data = make_pdf(page_sizes=((595, 842),))
+    image = make_png((100, 100))
+    custom = client.post(
+        "/api/v1/pdf/insert-image",
+        files={
+            "file": ("sample.pdf", data, "application/pdf"),
+            "image": ("stamp.png", image, "image/png"),
+        },
+        data={
+            "image_pages": "1",
+            "position": "custom",
+            "x_mm": "25",
+            "y_mm": "30",
+            "width_mm": "35",
+            "height_mm": "35",
+            "image_rotation": "90",
+            "overlay": "true",
+        },
+    )
+    assert custom.status_code == 200
+
+    background = client.post(
+        "/api/v1/pdf/insert-image",
+        files={
+            "file": ("sample.pdf", data, "application/pdf"),
+            "image": ("background.webp", image, "image/webp"),
+        },
+        data={
+            "position": "full_page",
+            "keep_aspect": "false",
+            "opacity": "0.4",
+            "overlay": "false",
+        },
+    )
+    assert background.status_code == 200
+    edited = pymupdf.open(stream=background.content, filetype="pdf")
+    try:
+        images = edited[0].get_images(full=True)
+        assert len(images) == 1
+        rects = edited[0].get_image_rects(images[0][0])
+        assert rects
+        assert abs(rects[0].width - edited[0].rect.width) < 2
+        assert abs(rects[0].height - edited[0].rect.height) < 2
+    finally:
+        edited.close()
+
+
+def test_pdf_insert_image_rejects_unsupported_image_type():
+    data = make_pdf(page_sizes=((300, 400),))
+    response = client.post(
+        "/api/v1/pdf/insert-image",
+        files={
+            "file": ("sample.pdf", data, "application/pdf"),
+            "image": ("logo.svg", b"<svg></svg>", "image/svg+xml"),
+        },
+    )
+    assert response.status_code == 415
