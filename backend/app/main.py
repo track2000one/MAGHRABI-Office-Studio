@@ -6,20 +6,21 @@ import os
 from zipfile import ZipFile, BadZipFile
 
 from docx import Document
-from fastapi import FastAPI, File, HTTPException, UploadFile, Header
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
 from . import ai
 from .exports import export_docx, export_pptx, format_docx
+from .pdf_tools import analyze_pdf, edit_pdf, merge_pdfs, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
 from pptx import Presentation
 
 app = FastAPI(
     title="MAGHRABI Office Studio API",
     version="0.2.0",
-    description="Document analysis and formatting engine for DOCX, XLSX and PPTX files.",
+    description="Document creation, Office analysis, and full-scale PDF editing engine.",
 )
 
 app.add_middleware(
@@ -161,6 +162,7 @@ def download(data: bytes, kind: str, filename: str):
     mime = {
         'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'pdf': 'application/pdf',
     }[kind]
     return Response(data, media_type=mime, headers={
         'Content-Disposition': f'attachment; filename="{filename}.{kind}"',
@@ -204,6 +206,74 @@ async def format_uploaded_docx(file: UploadFile = File(...)):
         return download(format_docx(data), 'docx', 'MAGHRABI-formatted')
     except Exception as exc:
         raise HTTPException(422, "تعذر تنسيق الملف. تأكد من صلاحية ملف Word.") from exc
+
+
+@app.post('/api/v1/pdf/analyze')
+async def pdf_analyze(file: UploadFile = File(...)):
+    if Path(file.filename or '').suffix.lower() != '.pdf':
+        raise HTTPException(415, "اختر ملف PDF.")
+    data = await file.read(MAX_PDF_UPLOAD + 1)
+    if len(data) > MAX_PDF_UPLOAD:
+        raise HTTPException(413, "حجم ملف PDF يتجاوز 30 ميجابايت.")
+    return analyze_pdf(data, file.filename or "document.pdf")
+
+
+@app.post('/api/v1/pdf/edit')
+async def pdf_edit(
+    file: UploadFile = File(...),
+    page_order: str = Form(""),
+    rotate: int = Form(0),
+    rotate_pages: str = Form(""),
+    page_size: str = Form("keep"),
+    custom_width_mm: float | None = Form(None),
+    custom_height_mm: float | None = Form(None),
+    orientation: str = Form("keep"),
+    crop_top_mm: float = Form(0),
+    crop_right_mm: float = Form(0),
+    crop_bottom_mm: float = Form(0),
+    crop_left_mm: float = Form(0),
+    watermark: str = Form(""),
+    page_numbers: bool = Form(False),
+    optimize: bool = Form(True),
+):
+    if Path(file.filename or '').suffix.lower() != '.pdf':
+        raise HTTPException(415, "اختر ملف PDF.")
+    data = await file.read(MAX_PDF_UPLOAD + 1)
+    if len(data) > MAX_PDF_UPLOAD:
+        raise HTTPException(413, "حجم ملف PDF يتجاوز 30 ميجابايت.")
+    result = edit_pdf(
+        data,
+        page_order=page_order,
+        rotate=rotate,
+        rotate_pages=rotate_pages,
+        page_size=page_size,
+        custom_width_mm=custom_width_mm,
+        custom_height_mm=custom_height_mm,
+        orientation=orientation,
+        crop_top_mm=crop_top_mm,
+        crop_right_mm=crop_right_mm,
+        crop_bottom_mm=crop_bottom_mm,
+        crop_left_mm=crop_left_mm,
+        watermark=watermark,
+        page_numbers=page_numbers,
+        optimize=optimize,
+    )
+    return download(result, 'pdf', 'MAGHRABI-edited')
+
+
+@app.post('/api/v1/pdf/merge')
+async def pdf_merge(files: list[UploadFile] = File(...)):
+    if len(files) < 2:
+        raise HTTPException(422, "اختر ملفي PDF على الأقل للدمج.")
+    payloads: list[bytes] = []
+    for file in files:
+        if Path(file.filename or '').suffix.lower() != '.pdf':
+            raise HTTPException(415, "جميع الملفات المرفوعة للدمج يجب أن تكون PDF.")
+        data = await file.read(MAX_PDF_UPLOAD + 1)
+        if len(data) > MAX_PDF_UPLOAD:
+            raise HTTPException(413, f"حجم الملف {file.filename or 'PDF'} يتجاوز 30 ميجابايت.")
+        payloads.append(data)
+    return download(merge_pdfs(payloads), 'pdf', 'MAGHRABI-merged')
 
 
 # One Railway service serves the built React app and API on the same origin.
