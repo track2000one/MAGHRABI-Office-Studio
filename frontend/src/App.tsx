@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api, downloadResponse, example, jsonBody } from "./api";
 import type { Content, Format, RequestSettings, Section } from "./api";
+import PdfStudio from "./PdfStudio";
 
-type Page = "home" | "create" | "files" | "projects" | "settings";
+type Page = "home" | "create" | "files" | "pdf" | "projects" | "settings";
 type Analysis = {
   filename: string;
   type: string;
@@ -27,6 +28,7 @@ const names: Record<Page, string> = {
   home: "مساحة عملك",
   create: "إنشاء المحتوى",
   files: "تحليل وتنسيق الملفات",
+  pdf: "تحرير PDF",
   projects: "مشاريعي",
   settings: "إعدادات الاتصال",
 };
@@ -343,6 +345,7 @@ export default function App() {
               ["home", "⌂", "الرئيسية"],
               ["create", "✦", "إنشاء بالذكاء الاصطناعي"],
               ["files", "▤", "ملفات Office"],
+              ["pdf", "PDF", "تحرير PDF"],
               ["projects", "◫", "مشاريعي"],
               ["settings", "⚙", "إعدادات الاتصال"],
             ] as [Page, string, string][]
@@ -469,6 +472,18 @@ export default function App() {
                   العربية.
                 </p>
                 <b>اختيار ملف ←</b>
+              </button>
+              <button
+                className="start-card"
+                onClick={() => changePage("pdf")}
+              >
+                <span className="app-icon pdf">PDF</span>
+                <h3>تحرير PDF كامل</h3>
+                <p>
+                  ترتيب ودمج وقص وتدوير الصفحات وتغيير المقاسات وإضافة العلامة
+                  المائية والترقيم.
+                </p>
+                <b>فتح محرر PDF ←</b>
               </button>
             </div>
             <section className="how-panel">
@@ -1179,6 +1194,7 @@ export default function App() {
             )}
           </div>
         )}
+        {page === "pdf" && <PdfStudio />}
         {page === "projects" && (
           <>
             <div className="soft-note">
