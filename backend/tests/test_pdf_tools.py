@@ -216,3 +216,15 @@ def test_pdf_insert_image_rejects_unsupported_image_type():
         },
     )
     assert response.status_code == 415
+
+
+def test_pdf_render_page_returns_png_preview():
+    data = make_pdf(page_sizes=((595, 842),))
+    response = client.post(
+        "/api/v1/pdf/render-page",
+        files={"file": ("sample.pdf", data, "application/pdf")},
+        data={"page_number": "1", "max_width_px": "900"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/png")
+    assert response.content.startswith(b"\x89PNG")
