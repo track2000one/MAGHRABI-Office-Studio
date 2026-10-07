@@ -250,3 +250,76 @@ it("opens PDF Studio and submits page-size editing settings", async () => {
     expect(body.get("orientation")).toBe("landscape");
   });
 });
+
+
+it("inserts an image into selected PDF pages with placement controls", async () => {
+  const create = vi.fn(() => "blob:preview");
+  URL.createObjectURL = create;
+  URL.revokeObjectURL = vi.fn();
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  const user = userEvent.setup();
+  const { container } = render(<App />);
+  await user.click(screen.getByRole("button", { name: /^تحرير PDF$/ }));
+
+  const analysis = {
+    filename: "sample.pdf",
+    size_bytes: 1200,
+    pages: 3,
+    text_chars: 60,
+    metadata: {},
+    page_sizes: [
+      { page: 1, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+      { page: 2, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+      { page: 3, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+    ],
+    supported_sizes: ["A4", "CUSTOM"],
+  };
+
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(JSON.stringify(analysis), { status: 200 }),
+  );
+  const pdf = new File(["fake-pdf"], "sample.pdf", { type: "application/pdf" });
+  const pdfInput = container.querySelector('input[type="file"][accept*=".pdf"]:not([multiple])') as HTMLInputElement;
+  await user.upload(pdfInput, pdf);
+  await screen.findByText(/3 صفحة/);
+
+  const imageInput = container.querySelector('input[type="file"][accept*=".png"]') as HTMLInputElement;
+  const image = new File(["fake-image"], "logo.png", { type: "image/png" });
+  await user.upload(imageInput, image);
+  expect(await screen.findByText("logo.png")).toBeVisible();
+
+  await user.clear(screen.getByLabelText("الصفحات المستهدفة"));
+  await user.type(screen.getByLabelText("الصفحات المستهدفة"), "1,3");
+  await user.selectOptions(screen.getByLabelText("موضع الصورة"), "custom");
+  await user.clear(screen.getByLabelText("X من اليسار (مم)"));
+  await user.type(screen.getByLabelText("X من اليسار (مم)"), "22");
+  await user.clear(screen.getByLabelText("Y من الأعلى (مم)"));
+  await user.type(screen.getByLabelText("Y من الأعلى (مم)"), "35");
+  await user.selectOptions(screen.getByLabelText("تدوير الصورة"), "90");
+  await user.selectOptions(screen.getByLabelText("طبقة الصورة"), "back");
+
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(new Blob(["image-pdf"], { type: "application/pdf" }), {
+      status: 200,
+      headers: { "Content-Type": "application/pdf" },
+    }),
+  );
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(JSON.stringify({ ...analysis, filename: "MAGHRABI-image-inserted.pdf", size_bytes: 1300 }), { status: 200 }),
+  );
+
+  await user.click(screen.getByRole("button", { name: "إدراج الصورة وتنزيل PDF" }));
+  await waitFor(() => {
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/pdf/insert-image"));
+    expect(call).toBeTruthy();
+    const body = call![1]!.body as FormData;
+    expect(body.get("image")).toBe(image);
+    expect(body.get("image_pages")).toBe("1,3");
+    expect(body.get("position")).toBe("custom");
+    expect(body.get("x_mm")).toBe("22");
+    expect(body.get("y_mm")).toBe("35");
+    expect(body.get("image_rotation")).toBe("90");
+    expect(body.get("overlay")).toBe("false");
+  });
+});
