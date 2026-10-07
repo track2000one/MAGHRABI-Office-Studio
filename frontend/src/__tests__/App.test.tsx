@@ -179,3 +179,74 @@ it("restores the access token from session storage after a page reload", async (
   await user.click(screen.getByRole("button", { name: /إعدادات الاتصال/ }));
   expect(screen.getByLabelText("رمز الوصول للمنصة")).toHaveValue("saved-session-token");
 });
+
+
+it("opens PDF Studio and submits page-size editing settings", async () => {
+  const create = vi.fn(() => "blob:pdf-preview");
+  URL.createObjectURL = create;
+  URL.revokeObjectURL = vi.fn();
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  const user = userEvent.setup();
+  const { container } = render(<App />);
+  await user.click(screen.getByRole("button", { name: /تحرير PDF/ }));
+
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        filename: "sample.pdf",
+        size_bytes: 1200,
+        pages: 2,
+        text_chars: 50,
+        metadata: {},
+        page_sizes: [
+          { page: 1, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 25 },
+          { page: 2, width_mm: 297, height_mm: 210, orientation: "landscape", rotation: 0, text_chars: 25 },
+        ],
+        supported_sizes: ["A4", "A3", "CUSTOM"],
+      }),
+      { status: 200 },
+    ),
+  );
+
+  const pdf = new File(["fake-pdf"], "sample.pdf", { type: "application/pdf" });
+  const fileInput = container.querySelector('input[type="file"][accept*=".pdf"]:not([multiple])') as HTMLInputElement;
+  await user.upload(fileInput, pdf);
+
+  expect(await screen.findByText(/2 صفحة/)).toBeVisible();
+  await user.selectOptions(screen.getByLabelText("المقاس"), "A3");
+  await user.selectOptions(screen.getByLabelText("الاتجاه"), "landscape");
+
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(new Blob(["edited-pdf"], { type: "application/pdf" }), {
+      status: 200,
+      headers: { "Content-Type": "application/pdf" },
+    }),
+  );
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(
+      JSON.stringify({
+        filename: "MAGHRABI-edited.pdf",
+        size_bytes: 1000,
+        pages: 2,
+        text_chars: 50,
+        metadata: {},
+        page_sizes: [
+          { page: 1, width_mm: 420, height_mm: 297, orientation: "landscape", rotation: 0, text_chars: 25 },
+          { page: 2, width_mm: 420, height_mm: 297, orientation: "landscape", rotation: 0, text_chars: 25 },
+        ],
+        supported_sizes: ["A4", "A3", "CUSTOM"],
+      }),
+      { status: 200 },
+    ),
+  );
+
+  await user.click(screen.getByRole("button", { name: "تطبيق التعديلات وتنزيل PDF" }));
+  await waitFor(() => {
+    const editCall = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/pdf/edit"));
+    expect(editCall).toBeTruthy();
+    const body = editCall![1]!.body as FormData;
+    expect(body.get("page_size")).toBe("A3");
+    expect(body.get("orientation")).toBe("landscape");
+  });
+});
