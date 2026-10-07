@@ -50,12 +50,26 @@ function downloadBlob(blob: Blob, filename: string) {
 export default function PdfStudio() {
   const input = useRef<HTMLInputElement>(null);
   const mergeInput = useRef<HTMLInputElement>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
 
   const [file, setFile] = useState<File | null>(null);
   const [original, setOriginal] = useState<File | null>(null);
   const [info, setInfo] = useState<PdfInfo | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [mergeFiles, setMergeFiles] = useState<File[]>([]);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState("");
+
+  const [imagePages, setImagePages] = useState("");
+  const [imagePosition, setImagePosition] = useState("top_right");
+  const [imageWidth, setImageWidth] = useState("40");
+  const [imageHeight, setImageHeight] = useState("40");
+  const [imageX, setImageX] = useState("10");
+  const [imageY, setImageY] = useState("10");
+  const [imageKeepAspect, setImageKeepAspect] = useState(true);
+  const [imageOpacity, setImageOpacity] = useState("1");
+  const [imageRotation, setImageRotation] = useState("0");
+  const [imageOverlay, setImageOverlay] = useState(true);
 
   const [pageOrder, setPageOrder] = useState("");
   const [rotate, setRotate] = useState("0");
@@ -87,6 +101,12 @@ export default function PdfStudio() {
     };
   }, [previewUrl]);
 
+  useEffect(() => {
+    return () => {
+      if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    };
+  }, [imagePreviewUrl]);
+
   async function analyze(next: File, rememberOriginal = false) {
     if (!next.name.toLowerCase().endsWith(".pdf"))
       throw new Error("اختر ملف PDF.");
@@ -104,6 +124,7 @@ export default function PdfStudio() {
     if (rememberOriginal) setOriginal(next);
     setPageOrder(`1-${result.pages}`);
     setRotatePages(`1-${result.pages}`);
+    setImagePages(`1-${result.pages}`);
 
     const url = URL.createObjectURL(next);
     setPreviewUrl((old) => {
@@ -165,6 +186,66 @@ export default function PdfStudio() {
     }
   }
 
+
+  function chooseImage(next?: File) {
+    if (!next) return;
+    const lower = next.name.toLowerCase();
+    if (!/\.(png|jpe?g|webp)$/.test(lower)) {
+      setError("اختر صورة PNG أو JPG أو JPEG أو WEBP.");
+      return;
+    }
+    if (next.size > 15 * 1024 * 1024) {
+      setError("الحد الأقصى للصورة هو 15 ميجابايت.");
+      return;
+    }
+    setImageFile(next);
+    setError("");
+    setNotice("تم اختيار الصورة. حدد الصفحات والموضع والحجم ثم اضغط إدراج الصورة.");
+    const url = URL.createObjectURL(next);
+    setImagePreviewUrl((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return url;
+    });
+  }
+
+  async function insertImage() {
+    if (!file || !imageFile) {
+      setError("اختر صورة أولًا.");
+      return;
+    }
+    setBusy("جارٍ إدراج الصورة على PDF…");
+    setError("");
+    setNotice("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("image", imageFile);
+      form.append("image_pages", imagePages.trim() || allPages);
+      form.append("position", imagePosition);
+      form.append("width_mm", imageWidth || "40");
+      form.append("height_mm", imageHeight || "40");
+      form.append("x_mm", imageX || "10");
+      form.append("y_mm", imageY || "10");
+      form.append("keep_aspect", String(imageKeepAspect));
+      form.append("opacity", imageOpacity);
+      form.append("image_rotation", imageRotation);
+      form.append("overlay", String(imageOverlay));
+
+      const response = await api("/pdf/insert-image", { method: "POST", body: form });
+      const blob = await response.blob();
+      const edited = new File([blob], "MAGHRABI-image-inserted.pdf", {
+        type: "application/pdf",
+      });
+      downloadBlob(blob, edited.name);
+      await analyze(edited, false);
+      setNotice("تم إدراج الصورة وتنزيل PDF. يمكنك إبقاء الصورة الحالية وإدراجها مرة أخرى بموضع مختلف، أو اختيار صورة أخرى.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "تعذر إدراج الصورة على PDF.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function merge() {
     const filesToMerge = file ? [file, ...mergeFiles] : mergeFiles;
     if (filesToMerge.length < 2) {
@@ -211,6 +292,16 @@ export default function PdfStudio() {
     setPageOrder(`1-${info.pages}`);
     setRotate("0");
     setRotatePages(`1-${info.pages}`);
+    setImagePages(`1-${info.pages}`);
+    setImagePosition("top_right");
+    setImageWidth("40");
+    setImageHeight("40");
+    setImageX("10");
+    setImageY("10");
+    setImageKeepAspect(true);
+    setImageOpacity("1");
+    setImageRotation("0");
+    setImageOverlay(true);
     setPageSize("keep");
     setOrientation("keep");
     setCustomWidth("210");
@@ -252,7 +343,7 @@ export default function PdfStudio() {
               <p className="muted">
                 ترتيب واستخراج الصفحات، تدويرها، قص الهوامش، تحويل المقاسات من A0
                 إلى A6 والمقاسات الأمريكية والمقاسات المخصصة، وإضافة علامة مائية
-                وترقيم ودمج ملفات متعددة.
+                وترقيم ودمج ملفات متعددة، مع إدراج الشعارات والأختام والصور.
               </p>
             </div>
             <button
@@ -468,8 +559,142 @@ export default function PdfStudio() {
                 </label>
               </div>
 
+
               <hr />
-              <h3>الإضافات</h3>
+              <div className="pdf-section-heading">
+                <div>
+                  <h3>إدراج صورة</h3>
+                  <p className="muted small">أضف شعارًا أو ختمًا أو توقيعًا أو صورة توضيحية على الصفحات المحددة.</p>
+                </div>
+                <span className="pdf-feature-badge">PNG · JPG · WEBP</span>
+              </div>
+
+              <button
+                className="button outline full"
+                disabled={!!busy}
+                onClick={() => imageInput.current?.click()}
+              >
+                {imageFile ? "تغيير الصورة" : "اختيار صورة"}
+              </button>
+              <input
+                ref={imageInput}
+                type="file"
+                accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
+                hidden
+                onChange={(e) => {
+                  chooseImage(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+
+              {imageFile && (
+                <div className="pdf-image-selected">
+                  {imagePreviewUrl && <img src={imagePreviewUrl} alt="معاينة الصورة المختارة" />}
+                  <div>
+                    <strong>{imageFile.name}</strong>
+                    <span>{(imageFile.size / 1024).toFixed(1)} KB</span>
+                  </div>
+                </div>
+              )}
+
+              <label>
+                الصفحات المستهدفة
+                <input
+                  value={imagePages}
+                  onChange={(e) => setImagePages(e.target.value)}
+                  placeholder="all أو 1-3,5"
+                />
+              </label>
+
+              <label>
+                موضع الصورة
+                <select value={imagePosition} onChange={(e) => setImagePosition(e.target.value)}>
+                  <option value="top_right">أعلى اليمين</option>
+                  <option value="top_left">أعلى اليسار</option>
+                  <option value="center">وسط الصفحة</option>
+                  <option value="bottom_right">أسفل اليمين</option>
+                  <option value="bottom_left">أسفل اليسار</option>
+                  <option value="full_page">ملء الصفحة / خلفية</option>
+                  <option value="custom">موضع مخصص</option>
+                </select>
+              </label>
+
+              {imagePosition === "custom" && (
+                <div className="two-fields">
+                  <label>
+                    X من اليسار (مم)
+                    <input type="number" min="0" step="0.5" value={imageX} onChange={(e) => setImageX(e.target.value)} />
+                  </label>
+                  <label>
+                    Y من الأعلى (مم)
+                    <input type="number" min="0" step="0.5" value={imageY} onChange={(e) => setImageY(e.target.value)} />
+                  </label>
+                </div>
+              )}
+
+              {imagePosition !== "full_page" && (
+                <div className="two-fields">
+                  <label>
+                    العرض (مم)
+                    <input type="number" min="1" step="0.5" value={imageWidth} onChange={(e) => setImageWidth(e.target.value)} />
+                  </label>
+                  <label>
+                    الارتفاع (مم)
+                    <input type="number" min="1" step="0.5" value={imageHeight} onChange={(e) => setImageHeight(e.target.value)} />
+                  </label>
+                </div>
+              )}
+
+              <label className="pdf-check">
+                <input
+                  type="checkbox"
+                  checked={imageKeepAspect}
+                  onChange={(e) => setImageKeepAspect(e.target.checked)}
+                />
+                الحفاظ على أبعاد الصورة الأصلية
+              </label>
+
+              <label>
+                الشفافية — {Math.round(Number(imageOpacity) * 100)}%
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1"
+                  step="0.05"
+                  value={imageOpacity}
+                  onChange={(e) => setImageOpacity(e.target.value)}
+                />
+              </label>
+
+              <div className="two-fields">
+                <label>
+                  تدوير الصورة
+                  <select value={imageRotation} onChange={(e) => setImageRotation(e.target.value)}>
+                    <option value="0">0°</option>
+                    <option value="90">90°</option>
+                    <option value="180">180°</option>
+                    <option value="270">270°</option>
+                  </select>
+                </label>
+                <label>
+                  طبقة الصورة
+                  <select value={imageOverlay ? "front" : "back"} onChange={(e) => setImageOverlay(e.target.value === "front")}>
+                    <option value="front">فوق المحتوى</option>
+                    <option value="back">خلف المحتوى</option>
+                  </select>
+                </label>
+              </div>
+
+              <button
+                className="button primary full"
+                disabled={!!busy || !imageFile}
+                onClick={() => void insertImage()}
+              >
+                إدراج الصورة وتنزيل PDF
+              </button>
+
+              <hr />
+              <h3>إضافات النص والترقيم</h3>
               <label>
                 علامة مائية
                 <input
