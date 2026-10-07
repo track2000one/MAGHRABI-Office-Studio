@@ -123,7 +123,7 @@ export default function PdfStudio() {
   }, [visualPageUrl]);
 
   useEffect(() => {
-    if (!file || imagePosition !== "free") return;
+    if (!file || !imageFile || imagePosition !== "free") return;
     let cancelled = false;
     const load = async () => {
       setVisualBusy(true);
@@ -150,7 +150,7 @@ export default function PdfStudio() {
     return () => {
       cancelled = true;
     };
-  }, [file, imagePosition, visualPage]);
+  }, [file, imageFile, imagePosition, visualPage]);
 
   async function analyze(next: File, rememberOriginal = false) {
     if (!next.name.toLowerCase().endsWith(".pdf"))
