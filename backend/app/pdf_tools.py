@@ -132,7 +132,7 @@ def _apply_crop(doc: pymupdf.Document, top_mm: float, right_mm: float, bottom_mm
     bottom = mm_to_pt(max(0, bottom_mm))
     left = mm_to_pt(max(0, left_mm))
     for page in doc:
-        rect = page.rect
+        rect = page.cropbox
         new_rect = pymupdf.Rect(
             rect.x0 + left,
             rect.y0 + top,
