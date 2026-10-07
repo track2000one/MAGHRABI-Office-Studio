@@ -166,8 +166,9 @@ export default function PdfStudio() {
   }
 
   async function merge() {
-    if (mergeFiles.length < 2) {
-      setError("اختر ملفي PDF على الأقل للدمج.");
+    const filesToMerge = file ? [file, ...mergeFiles] : mergeFiles;
+    if (filesToMerge.length < 2) {
+      setError(file ? "اختر ملف PDF إضافيًا واحدًا على الأقل." : "اختر ملفي PDF على الأقل للدمج.");
       return;
     }
     setBusy("جارٍ دمج ملفات PDF…");
@@ -175,7 +176,7 @@ export default function PdfStudio() {
     setNotice("");
     try {
       const form = new FormData();
-      mergeFiles.forEach((item) => form.append("files", item));
+      filesToMerge.forEach((item) => form.append("files", item));
       const response = await api("/pdf/merge", { method: "POST", body: form });
       const blob = await response.blob();
       const merged = new File([blob], "MAGHRABI-merged.pdf", {
@@ -311,7 +312,7 @@ export default function PdfStudio() {
             )}
             <button
               className="button primary"
-              disabled={!!busy || mergeFiles.length < 2}
+              disabled={!!busy || (file ? mergeFiles.length < 1 : mergeFiles.length < 2)}
               onClick={() => void merge()}
             >
               دمج وتنزيل
@@ -566,7 +567,7 @@ export default function PdfStudio() {
               <section className="panel pdf-merge-panel">
                 <h3>دمج ملفات إضافية</h3>
                 <p className="muted small">
-                  بعد الدمج تصبح النتيجة هي الملف الحالي ويمكنك متابعة التحرير عليها.
+                  سيُستخدم الملف الحالي أولًا، ثم تُضاف الملفات التي تختارها بالترتيب، وبعد الدمج يمكنك متابعة التحرير على النتيجة.
                 </p>
                 <button
                   className="button outline"
@@ -594,7 +595,7 @@ export default function PdfStudio() {
                 )}
                 <button
                   className="button primary"
-                  disabled={!!busy || mergeFiles.length < 2}
+                  disabled={!!busy || (file ? mergeFiles.length < 1 : mergeFiles.length < 2)}
                   onClick={() => void merge()}
                 >
                   دمج وتنزيل
