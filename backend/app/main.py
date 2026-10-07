@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
 from . import ai
 from .exports import export_docx, export_pptx, format_docx
-from .pdf_tools import analyze_pdf, edit_pdf, insert_image_into_pdf, merge_pdfs, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
+from .pdf_tools import analyze_pdf, edit_pdf, insert_image_into_pdf, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
 from pptx import Presentation
 
@@ -259,6 +259,21 @@ async def pdf_edit(
         optimize=optimize,
     )
     return download(result, 'pdf', 'MAGHRABI-edited')
+
+
+@app.post('/api/v1/pdf/render-page')
+async def pdf_render_page(
+    file: UploadFile = File(...),
+    page_number: int = Form(1),
+    max_width_px: int = Form(1200),
+):
+    if Path(file.filename or '').suffix.lower() != '.pdf':
+        raise HTTPException(415, "اختر ملف PDF.")
+    data = await file.read(MAX_PDF_UPLOAD + 1)
+    if len(data) > MAX_PDF_UPLOAD:
+        raise HTTPException(413, "حجم ملف PDF يتجاوز 30 ميجابايت.")
+    preview = render_pdf_page(data, page_number, max_width_px)
+    return Response(preview, media_type='image/png', headers={'Cache-Control': 'no-store'})
 
 
 @app.post('/api/v1/pdf/insert-image')
