@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 
 type PdfPageInfo = {
@@ -51,6 +51,8 @@ export default function PdfStudio() {
   const input = useRef<HTMLInputElement>(null);
   const mergeInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
+  const visualStageRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<null | { mode: "move" | "resize"; startClientX: number; startClientY: number; startX: number; startY: number; startWidth: number; startHeight: number; stageWidth: number; stageHeight: number }>(null);
 
   const [file, setFile] = useState<File | null>(null);
   const [original, setOriginal] = useState<File | null>(null);
@@ -59,9 +61,12 @@ export default function PdfStudio() {
   const [mergeFiles, setMergeFiles] = useState<File[]>([]);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState("");
+  const [visualPageUrl, setVisualPageUrl] = useState("");
+  const [visualPage, setVisualPage] = useState(1);
+  const [visualBusy, setVisualBusy] = useState(false);
 
   const [imagePages, setImagePages] = useState("");
-  const [imagePosition, setImagePosition] = useState("top_right");
+  const [imagePosition, setImagePosition] = useState("free");
   const [imageWidth, setImageWidth] = useState("40");
   const [imageHeight, setImageHeight] = useState("40");
   const [imageX, setImageX] = useState("10");
@@ -94,6 +99,10 @@ export default function PdfStudio() {
     () => (info ? `1-${info.pages}` : ""),
     [info],
   );
+  const visualPageInfo = useMemo(
+    () => info?.page_sizes.find((item) => item.page === visualPage) ?? null,
+    [info, visualPage],
+  );
 
   useEffect(() => {
     return () => {
@@ -106,6 +115,42 @@ export default function PdfStudio() {
       if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
     };
   }, [imagePreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (visualPageUrl) URL.revokeObjectURL(visualPageUrl);
+    };
+  }, [visualPageUrl]);
+
+  useEffect(() => {
+    if (!file || imagePosition !== "free") return;
+    let cancelled = false;
+    const load = async () => {
+      setVisualBusy(true);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("page_number", String(visualPage));
+        form.append("max_width_px", "1400");
+        const response = await api("/pdf/render-page", { method: "POST", body: form });
+        const blob = await response.blob();
+        if (cancelled) return;
+        const url = URL.createObjectURL(blob);
+        setVisualPageUrl((old) => {
+          if (old) URL.revokeObjectURL(old);
+          return url;
+        });
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "تعذر تجهيز المعاينة الحرة.");
+      } finally {
+        if (!cancelled) setVisualBusy(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [file, imagePosition, visualPage]);
 
   async function analyze(next: File, rememberOriginal = false) {
     if (!next.name.toLowerCase().endsWith(".pdf"))
@@ -125,6 +170,7 @@ export default function PdfStudio() {
     setPageOrder(`1-${result.pages}`);
     setRotatePages(`1-${result.pages}`);
     setImagePages(`1-${result.pages}`);
+    setVisualPage((current) => Math.min(Math.max(current, 1), result.pages));
 
     const url = URL.createObjectURL(next);
     setPreviewUrl((old) => {
@@ -200,12 +246,74 @@ export default function PdfStudio() {
     }
     setImageFile(next);
     setError("");
-    setNotice("تم اختيار الصورة. حدد الصفحات والموضع والحجم ثم اضغط إدراج الصورة.");
+    setImagePosition("free");
+    setNotice("تم اختيار الصورة. اسحبها فوق صفحة PDF وضعها في المكان المطلوب، ويمكنك تغيير حجمها من المقبض.");
     const url = URL.createObjectURL(next);
     setImagePreviewUrl((old) => {
       if (old) URL.revokeObjectURL(old);
       return url;
     });
+  }
+
+
+  function beginVisualDrag(event: ReactPointerEvent<HTMLElement>, mode: "move" | "resize") {
+    const stage = visualStageRef.current;
+    if (!stage || !visualPageInfo) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = stage.getBoundingClientRect();
+    dragRef.current = {
+      mode,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: Number(imageX) || 0,
+      startY: Number(imageY) || 0,
+      startWidth: Math.max(5, Number(imageWidth) || 40),
+      startHeight: Math.max(5, Number(imageHeight) || 40),
+      stageWidth: Math.max(bounds.width, 1),
+      stageHeight: Math.max(bounds.height, 1),
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  }
+
+  function updateVisualDrag(event: ReactPointerEvent<HTMLElement>) {
+    const drag = dragRef.current;
+    if (!drag || !visualPageInfo) return;
+    event.preventDefault();
+    const dxMm = ((event.clientX - drag.startClientX) / drag.stageWidth) * visualPageInfo.width_mm;
+    const dyMm = ((event.clientY - drag.startClientY) / drag.stageHeight) * visualPageInfo.height_mm;
+
+    if (drag.mode === "move") {
+      const nextX = Math.min(
+        Math.max(0, drag.startX + dxMm),
+        Math.max(0, visualPageInfo.width_mm - drag.startWidth),
+      );
+      const nextY = Math.min(
+        Math.max(0, drag.startY + dyMm),
+        Math.max(0, visualPageInfo.height_mm - drag.startHeight),
+      );
+      setImageX(nextX.toFixed(1));
+      setImageY(nextY.toFixed(1));
+      return;
+    }
+
+    let nextWidth = Math.max(5, drag.startWidth + dxMm);
+    let nextHeight = Math.max(5, drag.startHeight + dyMm);
+    if (imageKeepAspect) {
+      const ratio = drag.startWidth / Math.max(drag.startHeight, 0.1);
+      const dominantWidth = Math.abs(dxMm) >= Math.abs(dyMm) * ratio;
+      if (dominantWidth) nextHeight = nextWidth / ratio;
+      else nextWidth = nextHeight * ratio;
+    }
+    nextWidth = Math.min(nextWidth, Math.max(5, visualPageInfo.width_mm - drag.startX));
+    nextHeight = Math.min(nextHeight, Math.max(5, visualPageInfo.height_mm - drag.startY));
+    setImageWidth(nextWidth.toFixed(1));
+    setImageHeight(nextHeight.toFixed(1));
+  }
+
+  function endVisualDrag(event: ReactPointerEvent<HTMLElement>) {
+    dragRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
   }
 
   async function insertImage() {
@@ -221,7 +329,7 @@ export default function PdfStudio() {
       form.append("file", file);
       form.append("image", imageFile);
       form.append("image_pages", imagePages.trim() || allPages);
-      form.append("position", imagePosition);
+      form.append("position", imagePosition === "free" ? "custom" : imagePosition);
       form.append("width_mm", imageWidth || "40");
       form.append("height_mm", imageHeight || "40");
       form.append("x_mm", imageX || "10");
@@ -293,7 +401,7 @@ export default function PdfStudio() {
     setRotate("0");
     setRotatePages(`1-${info.pages}`);
     setImagePages(`1-${info.pages}`);
-    setImagePosition("top_right");
+    setImagePosition("free");
     setImageWidth("40");
     setImageHeight("40");
     setImageX("10");
@@ -609,6 +717,7 @@ export default function PdfStudio() {
               <label>
                 موضع الصورة
                 <select value={imagePosition} onChange={(e) => setImagePosition(e.target.value)}>
+                  <option value="free">حر — اسحب الصورة على الصفحة</option>
                   <option value="top_right">أعلى اليمين</option>
                   <option value="top_left">أعلى اليسار</option>
                   <option value="center">وسط الصفحة</option>
@@ -618,6 +727,17 @@ export default function PdfStudio() {
                   <option value="custom">موضع مخصص</option>
                 </select>
               </label>
+
+              {imagePosition === "free" && info && (
+                <label>
+                  صفحة المعاينة الحرة
+                  <select value={visualPage} onChange={(e) => setVisualPage(Number(e.target.value))}>
+                    {Array.from({ length: info.pages }, (_, index) => index + 1).map((page) => (
+                      <option key={page} value={page}>صفحة {page}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
 
               {imagePosition === "custom" && (
                 <div className="two-fields">
@@ -731,6 +851,67 @@ export default function PdfStudio() {
             </section>
 
             <div className="pdf-preview-column">
+
+              {imagePosition === "free" && imageFile && visualPageInfo && (
+                <section className="panel pdf-free-placement-panel">
+                  <div className="pdf-preview-header">
+                    <div>
+                      <strong>وضع الصورة بحرية</strong>
+                      <span>اسحب الصورة لأي مكان على الصفحة، واسحب المقبض الصغير لتغيير الحجم.</span>
+                    </div>
+                    <span className="pdf-feature-badge">صفحة {visualPage}</span>
+                  </div>
+
+                  <div
+                    ref={visualStageRef}
+                    className="pdf-visual-stage"
+                    style={{ aspectRatio: `${visualPageInfo.width_mm} / ${visualPageInfo.height_mm}` }}
+                  >
+                    {visualBusy && <div className="pdf-visual-loading">جارٍ تجهيز الصفحة…</div>}
+                    {visualPageUrl && <img className="pdf-visual-page" src={visualPageUrl} alt={`صفحة PDF رقم ${visualPage}`} />}
+                    {imagePreviewUrl && (
+                      <div
+                        className="pdf-free-image"
+                        data-testid="pdf-free-image"
+                        style={{
+                          left: `${(Number(imageX) / visualPageInfo.width_mm) * 100}%`,
+                          top: `${(Number(imageY) / visualPageInfo.height_mm) * 100}%`,
+                          width: `${(Number(imageWidth) / visualPageInfo.width_mm) * 100}%`,
+                          height: `${(Number(imageHeight) / visualPageInfo.height_mm) * 100}%`,
+                          opacity: Number(imageOpacity),
+                          transform: `rotate(${imageRotation}deg)`,
+                        }}
+                        onPointerDown={(event) => beginVisualDrag(event, "move")}
+                        onPointerMove={updateVisualDrag}
+                        onPointerUp={endVisualDrag}
+                        onPointerCancel={endVisualDrag}
+                      >
+                        <img
+                          src={imagePreviewUrl}
+                          alt="الصورة الموضوعة على PDF"
+                          draggable={false}
+                          style={{ objectFit: imageKeepAspect ? "contain" : "fill" }}
+                        />
+                        <button
+                          type="button"
+                          className="pdf-resize-handle"
+                          aria-label="تغيير حجم الصورة بالسحب"
+                          onPointerDown={(event) => beginVisualDrag(event, "resize")}
+                          onPointerMove={updateVisualDrag}
+                          onPointerUp={endVisualDrag}
+                          onPointerCancel={endVisualDrag}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <div className="pdf-placement-readout">
+                    <span>X: {Number(imageX).toFixed(1)} مم</span>
+                    <span>Y: {Number(imageY).toFixed(1)} مم</span>
+                    <span>{Number(imageWidth).toFixed(1)} × {Number(imageHeight).toFixed(1)} مم</span>
+                  </div>
+                </section>
+              )}
+
               <section className="panel pdf-preview-panel">
                 <div className="pdf-preview-header">
                   <div>
