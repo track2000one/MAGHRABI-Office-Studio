@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
 from . import ai
 from .exports import export_docx, export_pptx, format_docx
-from .pdf_tools import analyze_pdf, edit_pdf, merge_pdfs, MAX_PDF_UPLOAD
+from .pdf_tools import analyze_pdf, edit_pdf, insert_image_into_pdf, merge_pdfs, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
 from pptx import Presentation
 
@@ -259,6 +259,51 @@ async def pdf_edit(
         optimize=optimize,
     )
     return download(result, 'pdf', 'MAGHRABI-edited')
+
+
+@app.post('/api/v1/pdf/insert-image')
+async def pdf_insert_image(
+    file: UploadFile = File(...),
+    image: UploadFile = File(...),
+    image_pages: str = Form(""),
+    position: str = Form("top_right"),
+    width_mm: float = Form(40),
+    height_mm: float = Form(40),
+    x_mm: float = Form(10),
+    y_mm: float = Form(10),
+    keep_aspect: bool = Form(True),
+    opacity: float = Form(1),
+    image_rotation: int = Form(0),
+    overlay: bool = Form(True),
+):
+    if Path(file.filename or '').suffix.lower() != '.pdf':
+        raise HTTPException(415, "اختر ملف PDF.")
+    image_extension = Path(image.filename or '').suffix.lower()
+    if image_extension not in {'.png', '.jpg', '.jpeg', '.webp'}:
+        raise HTTPException(415, "الصورة يجب أن تكون PNG أو JPG أو JPEG أو WEBP.")
+
+    pdf_data = await file.read(MAX_PDF_UPLOAD + 1)
+    if len(pdf_data) > MAX_PDF_UPLOAD:
+        raise HTTPException(413, "حجم ملف PDF يتجاوز 30 ميجابايت.")
+    image_data = await image.read(MAX_IMAGE_UPLOAD + 1)
+    if len(image_data) > MAX_IMAGE_UPLOAD:
+        raise HTTPException(413, "حجم الصورة يتجاوز 15 ميجابايت.")
+
+    result = insert_image_into_pdf(
+        pdf_data,
+        image_data,
+        image_pages=image_pages,
+        position=position,
+        width_mm=width_mm,
+        height_mm=height_mm,
+        x_mm=x_mm,
+        y_mm=y_mm,
+        keep_aspect=keep_aspect,
+        opacity=opacity,
+        image_rotation=image_rotation,
+        overlay=overlay,
+    )
+    return download(result, 'pdf', 'MAGHRABI-image-inserted')
 
 
 @app.post('/api/v1/pdf/merge')

@@ -920,6 +920,68 @@ textarea::placeholder {
   height: 18px;
   flex: 0 0 auto;
 }
+
+.pdf-section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.pdf-section-heading h3 {
+  margin: 0 0 4px;
+}
+.pdf-section-heading p {
+  margin: 0;
+}
+.pdf-feature-badge {
+  flex: 0 0 auto;
+  border: 1px solid #d9e5ea;
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: #f4f8fa;
+  color: #688392;
+  font-size: 10px;
+  font-weight: 700;
+  direction: ltr;
+}
+.pdf-image-selected {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin: 14px 0;
+  padding: 11px;
+  border: 1px solid #dce7ec;
+  border-radius: 12px;
+  background: #f8fbfc;
+}
+.pdf-image-selected img {
+  width: 76px;
+  height: 64px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: white;
+  border: 1px solid #e1e9ed;
+}
+.pdf-image-selected div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.pdf-image-selected strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.pdf-image-selected span {
+  color: #708799;
+  font-size: 11px;
+}
+.pdf-controls input[type="range"] {
+  padding: 0;
+  accent-color: #0f8f91;
+}
+
 .pdf-preview-column {
   display: grid;
   gap: 24px;
