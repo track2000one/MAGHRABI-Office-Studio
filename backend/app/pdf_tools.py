@@ -301,7 +301,7 @@ def merge_pdfs(files: list[bytes]) -> bytes:
 def render_pdf_page(data: bytes, page_number: int, max_width_px: int = 1200) -> bytes:
     doc = open_pdf(data)
     try:
-        if page_number < 1 || page_number > doc.page_count:
+        if page_number < 1 or page_number > doc.page_count:
             raise HTTPException(422, f"رقم الصفحة يجب أن يكون بين 1 و{doc.page_count}.")
         if max_width_px < 320 or max_width_px > 2400:
             raise HTTPException(422, "عرض المعاينة يجب أن يكون بين 320 و2400 بكسل.")
