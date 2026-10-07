@@ -6,6 +6,7 @@ import re
 
 import pymupdf
 from fastapi import HTTPException
+from PIL import Image, UnidentifiedImageError
 
 MM_TO_PT = 72 / 25.4
 
@@ -26,6 +27,8 @@ PAGE_SIZES_MM: dict[str, tuple[float, float]] = {
 }
 
 MAX_PDF_UPLOAD = 30 * 1024 * 1024
+MAX_IMAGE_UPLOAD = 15 * 1024 * 1024
+MAX_IMAGE_PIXELS = 60_000_000
 
 
 def mm_to_pt(value: float) -> float:
@@ -66,7 +69,7 @@ def parse_page_spec(
         return list(range(1, page_count + 1)) if default_all else []
 
     pages: list[int] = []
-    for token in re.split(r"[,s;]+", raw):
+    for token in re.split(r"[,\s;]+", raw):
         if not token:
             continue
         if "-" in token:
@@ -292,3 +295,122 @@ def merge_pdfs(files: list[bytes]) -> bytes:
         return merged.tobytes(garbage=4, deflate=True, clean=True)
     finally:
         merged.close()
+
+
+def _prepare_image(data: bytes, opacity: float) -> tuple[bytes, int, int]:
+    if not data:
+        raise HTTPException(400, "ملف الصورة فارغ.")
+    if len(data) > MAX_IMAGE_UPLOAD:
+        raise HTTPException(413, "حجم الصورة يتجاوز 15 ميجابايت.")
+    if opacity <= 0 or opacity > 1:
+        raise HTTPException(422, "الشفافية يجب أن تكون أكبر من 0 وحتى 1.")
+
+    try:
+        with Image.open(BytesIO(data)) as image:
+            image.load()
+            width, height = image.size
+            if width < 1 or height < 1 or width * height > MAX_IMAGE_PIXELS:
+                raise HTTPException(422, "أبعاد الصورة كبيرة جدًا للمعالجة الآمنة.")
+
+            if opacity >= 0.999 and image.format in {"PNG", "JPEG", "JPG"}:
+                return data, width, height
+
+            rgba = image.convert("RGBA")
+            if opacity < 0.999:
+                alpha = rgba.getchannel("A")
+                alpha = alpha.point(lambda value: int(value * opacity))
+                rgba.putalpha(alpha)
+
+            output = BytesIO()
+            rgba.save(output, format="PNG", optimize=True)
+            return output.getvalue(), width, height
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise HTTPException(422, "تعذر قراءة الصورة. استخدم PNG أو JPG أو JPEG أو WEBP صالحًا.") from exc
+
+
+def _image_rect(
+    page: pymupdf.Page,
+    *,
+    position: str,
+    width_mm: float,
+    height_mm: float,
+    x_mm: float,
+    y_mm: float,
+) -> pymupdf.Rect:
+    rect = page.rect
+    position = position.lower().strip()
+    if position == "full_page":
+        return pymupdf.Rect(rect)
+
+    width = mm_to_pt(width_mm)
+    height = mm_to_pt(height_mm)
+    if width <= 0 or height <= 0:
+        raise HTTPException(422, "عرض الصورة وارتفاعها يجب أن يكونا أكبر من صفر.")
+    if width > rect.width * 2 or height > rect.height * 2:
+        raise HTTPException(422, "حجم الصورة أكبر من الحد المناسب للصفحة.")
+
+    margin = mm_to_pt(10)
+    if position == "top_right":
+        x0, y0 = rect.x1 - margin - width, rect.y0 + margin
+    elif position == "top_left":
+        x0, y0 = rect.x0 + margin, rect.y0 + margin
+    elif position == "center":
+        x0, y0 = rect.x0 + (rect.width - width) / 2, rect.y0 + (rect.height - height) / 2
+    elif position == "bottom_right":
+        x0, y0 = rect.x1 - margin - width, rect.y1 - margin - height
+    elif position == "bottom_left":
+        x0, y0 = rect.x0 + margin, rect.y1 - margin - height
+    elif position == "custom":
+        x0, y0 = rect.x0 + mm_to_pt(x_mm), rect.y0 + mm_to_pt(y_mm)
+    else:
+        raise HTTPException(422, "موضع الصورة غير مدعوم.")
+
+    target = pymupdf.Rect(x0, y0, x0 + width, y0 + height)
+    if target.x1 <= rect.x0 or target.x0 >= rect.x1 or target.y1 <= rect.y0 or target.y0 >= rect.y1:
+        raise HTTPException(422, "موضع الصورة يقع خارج الصفحة.")
+    return target
+
+
+def insert_image_into_pdf(
+    data: bytes,
+    image_data: bytes,
+    *,
+    image_pages: str | None = None,
+    position: str = "top_right",
+    width_mm: float = 40,
+    height_mm: float = 40,
+    x_mm: float = 10,
+    y_mm: float = 10,
+    keep_aspect: bool = True,
+    opacity: float = 1,
+    image_rotation: int = 0,
+    overlay: bool = True,
+) -> bytes:
+    if image_rotation not in (0, 90, 180, 270):
+        raise HTTPException(422, "تدوير الصورة يجب أن يكون 0 أو 90 أو 180 أو 270 درجة.")
+    prepared, _, _ = _prepare_image(image_data, opacity)
+    doc = open_pdf(data)
+    try:
+        selected = parse_page_spec(image_pages, doc.page_count, default_all=True)
+        for page_number in selected:
+            page = doc[page_number - 1]
+            target = _image_rect(
+                page,
+                position=position,
+                width_mm=width_mm,
+                height_mm=height_mm,
+                x_mm=x_mm,
+                y_mm=y_mm,
+            )
+            page.insert_image(
+                target,
+                stream=prepared,
+                keep_proportion=keep_aspect,
+                rotate=image_rotation,
+                overlay=overlay,
+            )
+        return doc.tobytes(garbage=4, deflate=True, clean=True)
+    finally:
+        doc.close()
