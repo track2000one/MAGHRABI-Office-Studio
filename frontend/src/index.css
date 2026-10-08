@@ -984,6 +984,20 @@ textarea::placeholder {
 
 
 
+
+.pdf-visual-editor-launch {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+}
+.pdf-visual-editor-launch h3 {
+  margin: 4px 0 6px;
+}
+.pdf-visual-editor-launch .button {
+  flex: 0 0 auto;
+}
+
 .pdf-visual-editor {
   padding: 20px;
   overflow: hidden;
@@ -1521,7 +1535,8 @@ textarea::placeholder {
     grid-template-columns: 1fr;
   }
   .pdf-visual-editor-head,
-  .pdf-visual-savebar {
+  .pdf-visual-savebar,
+  .pdf-visual-editor-launch {
     flex-direction: column;
     align-items: stretch;
   }
