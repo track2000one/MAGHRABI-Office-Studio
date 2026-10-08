@@ -1,5 +1,6 @@
 import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
+import PdfVisualEditor from "./PdfVisualEditor";
 
 type PdfPageInfo = {
   page: number;
@@ -671,8 +672,8 @@ export default function PdfStudio() {
               <hr />
               <div className="pdf-section-heading">
                 <div>
-                  <h3>إدراج صورة</h3>
-                  <p className="muted small">أضف شعارًا أو ختمًا أو توقيعًا أو صورة توضيحية على الصفحات المحددة.</p>
+                  <h3>إدراج صورة سريع</h3>
+                  <p className="muted small">للإضافة السريعة لصورة واحدة. للتعامل مع عدة عناصر استخدم المحرر المرئي.</p>
                 </div>
                 <span className="pdf-feature-badge">PNG · JPG · WEBP</span>
               </div>
@@ -851,6 +852,18 @@ export default function PdfStudio() {
             </section>
 
             <div className="pdf-preview-column">
+              {info && (
+                <PdfVisualEditor
+                  file={file}
+                  info={info}
+                  onApplied={async (edited) => {
+                    downloadBlob(edited, edited.name);
+                    await analyze(edited, false);
+                  }}
+                  onError={setError}
+                  onNotice={setNotice}
+                />
+              )}
 
               {imagePosition === "free" && imageFile && visualPageInfo && (
                 <section className="panel pdf-free-placement-panel">
