@@ -119,7 +119,7 @@ export default function PdfVisualEditor({
   const [saving, setSaving] = useState(false);
 
   const pageInfo = useMemo(
-    () => info.page_sizes.find((item) => item.page === page) ?? info.page_sizes[0],
+    () => info.page_sizes.find((item) => item.page === page) ?? info.page_sizes[0]!,
     [info, page],
   );
   const selected = useMemo(
