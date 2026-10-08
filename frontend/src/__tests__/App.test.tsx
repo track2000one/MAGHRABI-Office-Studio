@@ -410,3 +410,81 @@ it("supports free drag placement of an image over a rendered PDF page", async ()
     expect(Number(body.get("y_mm"))).toBeGreaterThan(10);
   });
 });
+
+
+it("uses the unified visual PDF editor and saves multiple elements in one request", async () => {
+  URL.createObjectURL = vi.fn(() => "blob:visual-editor");
+  URL.revokeObjectURL = vi.fn();
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  const analysis = {
+    filename: "sample.pdf",
+    size_bytes: 1200,
+    pages: 2,
+    text_chars: 40,
+    metadata: {},
+    page_sizes: [
+      { page: 1, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+      { page: 2, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+    ],
+    supported_sizes: ["A4", "CUSTOM"],
+  };
+
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    const path = String(url);
+    if (path.endsWith("/pdf/render-page")) {
+      return new Response(new Blob(["png"], { type: "image/png" }), {
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+      });
+    }
+    if (path.endsWith("/pdf/apply-visual-edits")) {
+      return new Response(new Blob(["edited-pdf"], { type: "application/pdf" }), {
+        status: 200,
+        headers: { "Content-Type": "application/pdf" },
+      });
+    }
+    if (path.endsWith("/pdf/analyze")) {
+      return new Response(JSON.stringify(analysis), { status: 200 });
+    }
+    return new Response(JSON.stringify({ configured: false }), { status: 200 });
+  });
+
+  const user = userEvent.setup();
+  const { container } = render(<App />);
+  await user.click(screen.getByRole("button", { name: /^تحرير PDF$/ }));
+
+  const pdf = new File(["fake-pdf"], "sample.pdf", { type: "application/pdf" });
+  const pdfInput = container.querySelector('input[type="file"][accept*=".pdf"]:not([multiple])') as HTMLInputElement;
+  await user.upload(pdfInput, pdf);
+  await screen.findByText(/2 صفحة/);
+
+  await user.click(screen.getByRole("button", { name: "فتح المحرر المرئي" }));
+  await screen.findByRole("toolbar", { name: "أدوات المحرر المرئي" });
+
+  await user.click(screen.getByRole("button", { name: "＋ نص" }));
+  const textField = screen.getByLabelText("النص");
+  await user.clear(textField);
+  await user.type(textField, "نص عربي تجريبي");
+  expect(screen.getAllByText("نص عربي تجريبي").length).toBeGreaterThan(0);
+
+  await user.click(screen.getByRole("button", { name: "＋ صورة" }));
+  const visualEditor = container.querySelector(".pdf-visual-editor") as HTMLElement;
+  const assetInput = visualEditor.querySelector('input[type="file"][accept*=".png"]') as HTMLInputElement;
+  const logo = new File(["image"], "logo.png", { type: "image/png" });
+  await user.upload(assetInput, logo);
+  expect(screen.getByTestId("visual-element-image")).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "تطبيق جميع العناصر وحفظ PDF" }));
+
+  await waitFor(() => {
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/pdf/apply-visual-edits"));
+    expect(call).toBeTruthy();
+    const body = call![1]!.body as FormData;
+    const elements = JSON.parse(String(body.get("elements_json")));
+    expect(elements).toHaveLength(2);
+    expect(elements.some((item: { type: string; text?: string }) => item.type === "text" && item.text === "نص عربي تجريبي")).toBe(true);
+    expect(elements.some((item: { type: string; asset_index?: number }) => item.type === "image" && item.asset_index === 0)).toBe(true);
+    expect(body.getAll("assets")).toHaveLength(1);
+  });
+});

@@ -430,3 +430,115 @@ def insert_image_into_pdf(
         return doc.tobytes(garbage=4, deflate=True, clean=True)
     finally:
         doc.close()
+
+
+def _visual_rect(page: pymupdf.Page, element: dict) -> pymupdf.Rect:
+    try:
+        x_mm = float(element.get("x_mm", 0))
+        y_mm = float(element.get("y_mm", 0))
+        width_mm = float(element.get("width_mm", 0))
+        height_mm = float(element.get("height_mm", 0))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, "إحداثيات عنصر PDF غير صالحة.") from exc
+
+    if width_mm <= 0 or height_mm <= 0:
+        raise HTTPException(422, "أبعاد عنصر PDF يجب أن تكون أكبر من صفر.")
+    rect = page.rect
+    target = pymupdf.Rect(
+        rect.x0 + mm_to_pt(x_mm),
+        rect.y0 + mm_to_pt(y_mm),
+        rect.x0 + mm_to_pt(x_mm + width_mm),
+        rect.y0 + mm_to_pt(y_mm + height_mm),
+    )
+    if target.x1 <= rect.x0 or target.x0 >= rect.x1 or target.y1 <= rect.y0 or target.y0 >= rect.y1:
+        raise HTTPException(422, "يوجد عنصر خارج حدود الصفحة.")
+    return target
+
+
+def apply_visual_edits(data: bytes, elements: list[dict], assets: list[bytes]) -> bytes:
+    if len(elements) > 120:
+        raise HTTPException(422, "الحد الأقصى للعناصر المرئية هو 120 عنصرًا في عملية الحفظ الواحدة.")
+
+    doc = open_pdf(data)
+    prepared_assets: dict[tuple[int, float], bytes] = {}
+    try:
+        for element in elements:
+            if not isinstance(element, dict):
+                raise HTTPException(422, "بيانات أحد عناصر المحرر المرئي غير صالحة.")
+
+            kind = str(element.get("type", "")).lower()
+            try:
+                page_number = int(element.get("page", 0))
+                rotation = int(element.get("rotation", 0))
+                opacity = float(element.get("opacity", 1))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(422, "بيانات أحد عناصر المحرر المرئي غير صالحة.") from exc
+
+            if page_number < 1 or page_number > doc.page_count:
+                raise HTTPException(422, f"رقم صفحة العنصر يجب أن يكون بين 1 و{doc.page_count}.")
+            if rotation not in (0, 90, 180, 270):
+                raise HTTPException(422, "تدوير العناصر يجب أن يكون 0 أو 90 أو 180 أو 270 درجة.")
+            if opacity <= 0 or opacity > 1:
+                raise HTTPException(422, "شفافية العناصر يجب أن تكون أكبر من صفر وحتى 1.")
+
+            page = doc[page_number - 1]
+            target = _visual_rect(page, element)
+
+            if kind in {"image", "signature"}:
+                try:
+                    asset_index = int(element.get("asset_index", -1))
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(422, "مرجع الصورة غير صالح.") from exc
+                if asset_index < 0 or asset_index >= len(assets):
+                    raise HTTPException(422, "لم يتم العثور على الصورة المرتبطة بأحد العناصر.")
+                cache_key = (asset_index, round(opacity, 3))
+                prepared = prepared_assets.get(cache_key)
+                if prepared is None:
+                    prepared, _, _ = _prepare_image(assets[asset_index], opacity)
+                    prepared_assets[cache_key] = prepared
+                page.insert_image(
+                    target,
+                    stream=prepared,
+                    keep_proportion=bool(element.get("keep_aspect", True)),
+                    rotate=rotation,
+                    overlay=True,
+                )
+                continue
+
+            if kind == "text":
+                raw_text = str(element.get("text", ""))[:2000]
+                if not raw_text.strip():
+                    continue
+                safe_text = escape(raw_text).replace("\n", "<br>")
+                try:
+                    font_size = float(element.get("font_size_pt", 14))
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(422, "حجم الخط غير صالح.") from exc
+                font_size = min(max(font_size, 6), 96)
+                color = str(element.get("color", "#173645"))
+                if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+                    color = "#173645"
+                align = str(element.get("align", "right")).lower()
+                if align not in {"right", "center", "left"}:
+                    align = "right"
+                direction = "rtl" if bool(element.get("rtl", True)) else "ltr"
+                weight = "700" if bool(element.get("bold", False)) else "400"
+                html = (
+                    f'<div dir="{direction}" style="font-family:sans-serif;'
+                    f'font-size:{font_size}pt;font-weight:{weight};color:{color};'
+                    f'text-align:{align};line-height:1.35;">{safe_text}</div>'
+                )
+                page.insert_htmlbox(
+                    target,
+                    html,
+                    rotate=rotation,
+                    opacity=opacity,
+                    overlay=True,
+                )
+                continue
+
+            raise HTTPException(422, "نوع عنصر غير مدعوم في المحرر المرئي.")
+
+        return doc.tobytes(garbage=4, deflate=True, clean=True)
+    finally:
+        doc.close()
