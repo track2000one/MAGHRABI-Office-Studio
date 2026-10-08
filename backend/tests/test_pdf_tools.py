@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 
 import pymupdf
@@ -228,3 +229,82 @@ def test_pdf_render_page_returns_png_preview():
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/png")
     assert response.content.startswith(b"\x89PNG")
+
+
+def test_pdf_visual_editor_applies_text_and_image_in_one_save():
+    data = make_pdf(page_sizes=((595, 842),))
+    image = make_png((160, 90))
+    elements = [
+        {
+            "id": "text-1",
+            "type": "text",
+            "page": 1,
+            "x_mm": 20,
+            "y_mm": 25,
+            "width_mm": 80,
+            "height_mm": 25,
+            "rotation": 0,
+            "opacity": 1,
+            "text": "Visual editor text",
+            "font_size_pt": 16,
+            "color": "#173645",
+            "bold": True,
+            "align": "right",
+            "rtl": False,
+        },
+        {
+            "id": "image-1",
+            "type": "image",
+            "page": 1,
+            "x_mm": 110,
+            "y_mm": 35,
+            "width_mm": 45,
+            "height_mm": 30,
+            "rotation": 0,
+            "opacity": 0.8,
+            "asset_index": 0,
+            "keep_aspect": True,
+        },
+    ]
+    response = client.post(
+        "/api/v1/pdf/apply-visual-edits",
+        files=[
+            ("file", ("sample.pdf", data, "application/pdf")),
+            ("assets", ("logo.png", image, "image/png")),
+        ],
+        data={"elements_json": json.dumps(elements)},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    edited = pymupdf.open(stream=response.content, filetype="pdf")
+    try:
+        assert edited.page_count == 1
+        assert "Visual editor text" in edited[0].get_text("text")
+        assert len(edited[0].get_images(full=True)) >= 1
+    finally:
+        edited.close()
+
+
+def test_pdf_visual_editor_rejects_missing_asset_reference():
+    data = make_pdf(page_sizes=((595, 842),))
+    elements = [
+        {
+            "id": "image-1",
+            "type": "image",
+            "page": 1,
+            "x_mm": 10,
+            "y_mm": 10,
+            "width_mm": 40,
+            "height_mm": 30,
+            "rotation": 0,
+            "opacity": 1,
+            "asset_index": 0,
+            "keep_aspect": True,
+        }
+    ]
+    response = client.post(
+        "/api/v1/pdf/apply-visual-edits",
+        files={"file": ("sample.pdf", data, "application/pdf")},
+        data={"elements_json": json.dumps(elements)},
+    )
+    assert response.status_code == 422
