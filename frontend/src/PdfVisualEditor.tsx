@@ -105,6 +105,7 @@ export default function PdfVisualEditor({
     before: VisualElement[];
   }>(null);
 
+  const [active, setActive] = useState(false);
   const [page, setPage] = useState(1);
   const [pageUrl, setPageUrl] = useState("");
   const [thumbUrls, setThumbUrls] = useState<Record<number, string>>({});
@@ -160,6 +161,7 @@ export default function PdfVisualEditor({
   }, [file]);
 
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     const loadPage = async () => {
       setLoadingPage(true);
@@ -187,9 +189,10 @@ export default function PdfVisualEditor({
     return () => {
       cancelled = true;
     };
-  }, [file, page]);
+  }, [active, file, page]);
 
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     const maxThumbs = Math.min(info.pages, 60);
     const load = async () => {
@@ -216,9 +219,10 @@ export default function PdfVisualEditor({
     return () => {
       cancelled = true;
     };
-  }, [file, info.pages]);
+  }, [active, file, info.pages]);
 
   useEffect(() => {
+    if (!active) return;
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const typing =
@@ -246,7 +250,7 @@ export default function PdfVisualEditor({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedId, elements, undoStack, redoStack]);
+  }, [active, selectedId, elements, undoStack, redoStack]);
 
   useEffect(() => {
     return () => {
@@ -502,6 +506,23 @@ export default function PdfVisualEditor({
     }
   }
 
+  if (!active) {
+    return (
+      <section className="panel pdf-visual-editor-launch">
+        <div>
+          <span className="welcome-label">VISUAL PDF EDITOR</span>
+          <h3>المحرر المرئي الجديد</h3>
+          <p className="muted small">
+            حرّك الصور والنصوص والتواقيع مباشرة فوق صفحات PDF مع تراجع وإعادة وتكبير وصور مصغرة للصفحات.
+          </p>
+        </div>
+        <button className="button primary" onClick={() => setActive(true)}>
+          فتح المحرر المرئي
+        </button>
+      </section>
+    );
+  }
+
   return (
     <section className="panel pdf-visual-editor">
       <div className="pdf-visual-editor-head">
@@ -513,6 +534,7 @@ export default function PdfVisualEditor({
           </p>
         </div>
         <div className="pdf-visual-toolbar" role="toolbar" aria-label="أدوات المحرر المرئي">
+          <button className="button outline" onClick={() => setActive(false)} disabled={saving}>إغلاق</button>
           <button className="button outline" onClick={addText} disabled={saving}>＋ نص</button>
           <button className="button outline" onClick={() => requestAsset("image")} disabled={saving}>＋ صورة</button>
           <button className="button outline" onClick={() => requestAsset("signature")} disabled={saving}>＋ توقيع</button>
