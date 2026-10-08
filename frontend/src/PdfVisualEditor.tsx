@@ -87,6 +87,8 @@ export default function PdfVisualEditor({
   const stageRef = useRef<HTMLDivElement>(null);
   const idCounter = useRef(0);
   const assetsRef = useRef<Record<string, AssetEntry>>({});
+  const pageUrlRef = useRef("");
+  const thumbUrlsRef = useRef<Record<number, string>>({});
   const dragRef = useRef<null | {
     mode: "move" | "resize";
     id: string;
@@ -131,6 +133,14 @@ export default function PdfVisualEditor({
   useEffect(() => {
     assetsRef.current = assets;
   }, [assets]);
+
+  useEffect(() => {
+    pageUrlRef.current = pageUrl;
+  }, [pageUrl]);
+
+  useEffect(() => {
+    thumbUrlsRef.current = thumbUrls;
+  }, [thumbUrls]);
 
   useEffect(() => {
     setPage(1);
@@ -240,10 +250,11 @@ export default function PdfVisualEditor({
 
   useEffect(() => {
     return () => {
-      if (pageUrl) URL.revokeObjectURL(pageUrl);
+      if (pageUrlRef.current) URL.revokeObjectURL(pageUrlRef.current);
+      Object.values(thumbUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
       Object.values(assetsRef.current).forEach((entry) => URL.revokeObjectURL(entry.url));
     };
-  }, [pageUrl]);
+  }, []);
 
   function commit(next: VisualElement[] | ((current: VisualElement[]) => VisualElement[])) {
     setElements((current) => {
@@ -507,7 +518,7 @@ export default function PdfVisualEditor({
           <button className="button outline" onClick={() => requestAsset("signature")} disabled={saving}>＋ توقيع</button>
           <button className="button outline" onClick={undo} disabled={!undoStack.length || saving} title="تراجع Ctrl+Z">↶</button>
           <button className="button outline" onClick={redo} disabled={!redoStack.length || saving} title="إعادة Ctrl+Y">↷</button>
-          <button className="button danger-soft" onClick={deleteSelected} disabled={!selectedId || saving}>حذف</button>
+          <button className="button danger" onClick={deleteSelected} disabled={!selectedId || saving}>حذف</button>
           <input
             ref={assetInput}
             type="file"
