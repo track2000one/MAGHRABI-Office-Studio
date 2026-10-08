@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import json
 import os
 from zipfile import ZipFile, BadZipFile
 
@@ -13,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
 from . import ai
 from .exports import export_docx, export_pptx, format_docx
-from .pdf_tools import analyze_pdf, edit_pdf, insert_image_into_pdf, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
+from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
 from pptx import Presentation
 
@@ -319,6 +320,43 @@ async def pdf_insert_image(
         overlay=overlay,
     )
     return download(result, 'pdf', 'MAGHRABI-image-inserted')
+
+
+@app.post('/api/v1/pdf/apply-visual-edits')
+async def pdf_apply_visual_edits(
+    file: UploadFile = File(...),
+    elements_json: str = Form("[]"),
+    assets: list[UploadFile] | None = File(None),
+):
+    if Path(file.filename or '').suffix.lower() != '.pdf':
+        raise HTTPException(415, "اختر ملف PDF.")
+    pdf_data = await file.read(MAX_PDF_UPLOAD + 1)
+    if len(pdf_data) > MAX_PDF_UPLOAD:
+        raise HTTPException(413, "حجم ملف PDF يتجاوز 30 ميجابايت.")
+
+    try:
+        elements = json.loads(elements_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, "بيانات المحرر المرئي غير صالحة.") from exc
+    if not isinstance(elements, list):
+        raise HTTPException(422, "بيانات المحرر المرئي يجب أن تكون قائمة عناصر.")
+
+    asset_payloads: list[bytes] = []
+    total_assets = 0
+    for asset in assets or []:
+        extension = Path(asset.filename or '').suffix.lower()
+        if extension not in {'.png', '.jpg', '.jpeg', '.webp'}:
+            raise HTTPException(415, "صور المحرر المرئي يجب أن تكون PNG أو JPG أو JPEG أو WEBP.")
+        data = await asset.read(MAX_IMAGE_UPLOAD + 1)
+        if len(data) > MAX_IMAGE_UPLOAD:
+            raise HTTPException(413, f"حجم الصورة {asset.filename or 'image'} يتجاوز 15 ميجابايت.")
+        total_assets += len(data)
+        if total_assets > 45 * 1024 * 1024:
+            raise HTTPException(413, "إجمالي الصور في عملية الحفظ يتجاوز 45 ميجابايت.")
+        asset_payloads.append(data)
+
+    result = apply_visual_edits(pdf_data, elements, asset_payloads)
+    return download(result, 'pdf', 'MAGHRABI-visual-edited')
 
 
 @app.post('/api/v1/pdf/merge')
