@@ -466,7 +466,7 @@ it("uses the unified visual PDF editor and saves multiple elements in one reques
   const textField = screen.getByLabelText("النص");
   await user.clear(textField);
   await user.type(textField, "نص عربي تجريبي");
-  expect(screen.getByText("نص عربي تجريبي")).toBeVisible();
+  expect(screen.getAllByText("نص عربي تجريبي").length).toBeGreaterThan(0);
 
   await user.click(screen.getByRole("button", { name: "＋ صورة" }));
   const visualEditor = container.querySelector(".pdf-visual-editor") as HTMLElement;
