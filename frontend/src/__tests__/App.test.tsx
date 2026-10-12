@@ -542,7 +542,17 @@ it("uses the unified visual PDF editor and saves multiple elements in one reques
   const thumbnails = Array.from(container.querySelectorAll(".pdf-thumb")) as HTMLButtonElement[];
   await user.click(thumbnails[1]!);
   expect(screen.queryByTestId("visual-element-image")).not.toBeInTheDocument();
+
   await user.click(thumbnails[0]!);
+  const originalImage = screen.getByTestId("visual-element-image");
+  expect(originalImage).toBeVisible();
+
+  await user.click(originalImage);
+  expect(screen.getByText("نسخ العنصر إلى صفحات أخرى")).toBeVisible();
+  expect(screen.getByLabelText("نطاق النسخ")).toHaveValue("next");
+  await user.click(screen.getByRole("button", { name: "نسخ العنصر" }));
+
+  await user.click(thumbnails[1]!);
   expect(screen.getByTestId("visual-element-image")).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "تطبيق جميع العناصر وحفظ PDF" }));
@@ -552,9 +562,12 @@ it("uses the unified visual PDF editor and saves multiple elements in one reques
     expect(call).toBeTruthy();
     const body = call![1]!.body as FormData;
     const elements = JSON.parse(String(body.get("elements_json")));
-    expect(elements).toHaveLength(2);
+    expect(elements).toHaveLength(3);
     expect(elements.some((item: { type: string; text?: string }) => item.type === "text" && item.text === "نص عربي تجريبي")).toBe(true);
-    expect(elements.some((item: { type: string; asset_index?: number }) => item.type === "image" && item.asset_index === 0)).toBe(true);
+    const images = elements.filter((item: { type: string }) => item.type === "image");
+    expect(images).toHaveLength(2);
+    expect(images.map((item: { page: number }) => item.page).sort()).toEqual([1, 2]);
+    expect(images.every((item: { asset_index?: number }) => item.asset_index === 0)).toBe(true);
     expect(body.getAll("assets")).toHaveLength(1);
   });
 });

@@ -1206,6 +1206,31 @@ textarea::placeholder {
   font-weight: 700;
   margin-bottom: 8px;
 }
+
+.pdf-copy-element-panel {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #d8e5ea;
+  border-radius: 10px;
+  background: #f4f8fa;
+}
+.pdf-copy-element-panel > strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #173b50;
+  font-size: 12px;
+}
+.pdf-copy-element-panel > p {
+  margin: 0 0 8px;
+  line-height: 1.7;
+}
+.pdf-copy-element-panel label {
+  margin: 9px 0;
+}
+.pdf-copy-element-panel .button {
+  margin-top: 4px;
+}
+
 .pdf-visual-savebar {
   display: flex;
   justify-content: space-between;

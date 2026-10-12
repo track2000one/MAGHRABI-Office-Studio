@@ -75,6 +75,30 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
 }
 
+function parsePageTargets(spec: string, totalPages: number, sourcePage: number) {
+  const pages: number[] = [];
+  for (const token of spec.split(/[\s,;]+/).filter(Boolean)) {
+    if (/^\d+$/.test(token)) {
+      pages.push(Number(token));
+      continue;
+    }
+    const match = token.match(/^(\d+)-(\d+)$/);
+    if (!match) throw new Error(`صيغة الصفحات غير صحيحة: ${token}`);
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    const step = start <= end ? 1 : -1;
+    for (let value = start; value !== end + step; value += step) pages.push(value);
+  }
+
+  if (!pages.length) throw new Error("حدد صفحة واحدة على الأقل للنسخ.");
+  if (pages.some((page) => page < 1 || page > totalPages))
+    throw new Error(`أرقام الصفحات يجب أن تكون بين 1 و${totalPages}.`);
+
+  const unique = Array.from(new Set(pages)).filter((page) => page !== sourcePage);
+  if (!unique.length) throw new Error("اختر صفحة أخرى غير الصفحة الحالية.");
+  return unique;
+}
+
 export default function PdfVisualEditor({
   file,
   info,
@@ -117,6 +141,8 @@ export default function PdfVisualEditor({
   const [zoom, setZoom] = useState(100);
   const [loadingPage, setLoadingPage] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [copyScope, setCopyScope] = useState<"next" | "selected" | "all">("next");
+  const [copyPages, setCopyPages] = useState("");
 
   const pageInfo = useMemo(
     () => info.page_sizes.find((item) => item.page === page) ?? info.page_sizes[0]!,
@@ -150,6 +176,8 @@ export default function PdfVisualEditor({
     setUndoStack([]);
     setRedoStack([]);
     setZoom(100);
+    setCopyScope("next");
+    setCopyPages("");
     setThumbUrls((old) => {
       Object.values(old).forEach((url) => URL.revokeObjectURL(url));
       return {};
@@ -362,6 +390,56 @@ export default function PdfVisualEditor({
         item.id === selectedId ? ({ ...item, ...patch } as VisualElement) : item,
       ),
     );
+  }
+
+  function cloneElementToPage(element: VisualElement, targetPage: number): VisualElement {
+    const targetInfo =
+      info.page_sizes.find((item) => item.page === targetPage) ?? info.page_sizes[0]!;
+    const widthMm = Math.min(element.widthMm, targetInfo.width_mm);
+    const heightMm = Math.min(element.heightMm, targetInfo.height_mm);
+    return {
+      ...element,
+      id: makeId(element.type, ++idCounter.current),
+      page: targetPage,
+      widthMm,
+      heightMm,
+      xMm: clamp(element.xMm, 0, Math.max(0, targetInfo.width_mm - widthMm)),
+      yMm: clamp(element.yMm, 0, Math.max(0, targetInfo.height_mm - heightMm)),
+    } as VisualElement;
+  }
+
+  function copySelectedElement() {
+    if (!selected) {
+      onError("حدد عنصرًا أولًا.");
+      return;
+    }
+
+    try {
+      let targets: number[];
+      if (copyScope === "next") {
+        if (selected.page >= info.pages) {
+          onError("العنصر موجود في آخر صفحة ولا توجد صفحة تالية.");
+          return;
+        }
+        targets = [selected.page + 1];
+      } else if (copyScope === "all") {
+        targets = Array.from({ length: info.pages }, (_, index) => index + 1).filter(
+          (pageNumber) => pageNumber !== selected.page,
+        );
+      } else {
+        targets = parsePageTargets(copyPages, info.pages, selected.page);
+      }
+
+      const copies = targets.map((targetPage) => cloneElementToPage(selected, targetPage));
+      commit((current) => [...current, ...copies]);
+      onNotice(
+        copies.length === 1
+          ? `تم نسخ العنصر إلى الصفحة ${copies[0]!.page}. النسخة مستقلة ويمكن تعديلها دون التأثير على الأصل.`
+          : `تم نسخ العنصر إلى ${copies.length} صفحات. كل نسخة مستقلة عن الصفحات الأخرى.`,
+      );
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "تعذر نسخ العنصر إلى الصفحات المطلوبة.");
+    }
   }
 
   function beginDrag(
@@ -789,7 +867,47 @@ export default function PdfVisualEditor({
                   />
                 </label>
               </div>
-              <button className="button danger-soft full" onClick={deleteSelected}>حذف العنصر</button>
+
+              {info.pages > 1 && (
+                <div className="pdf-copy-element-panel">
+                  <strong>نسخ العنصر إلى صفحات أخرى</strong>
+                  <p className="muted small">
+                    تُنشأ نسخة مستقلة بنفس الموضع والحجم؛ ويمكن تعديلها لاحقًا دون التأثير على الصفحة الأصلية.
+                  </p>
+                  <label>
+                    نطاق النسخ
+                    <select
+                      value={copyScope}
+                      onChange={(event) =>
+                        setCopyScope(event.target.value as "next" | "selected" | "all")
+                      }
+                    >
+                      <option value="next">الصفحة التالية فقط</option>
+                      <option value="selected">صفحات محددة</option>
+                      <option value="all">جميع الصفحات الأخرى</option>
+                    </select>
+                  </label>
+                  {copyScope === "selected" && (
+                    <label>
+                      الصفحات
+                      <input
+                        value={copyPages}
+                        onChange={(event) => setCopyPages(event.target.value)}
+                        placeholder="مثال: 2,4,6-8"
+                      />
+                    </label>
+                  )}
+                  <button
+                    className="button outline full"
+                    onClick={copySelectedElement}
+                    disabled={saving || (copyScope === "next" && selected.page >= info.pages)}
+                  >
+                    نسخ العنصر
+                  </button>
+                </div>
+              )}
+
+              <button className="button danger full" onClick={deleteSelected}>حذف العنصر</button>
             </>
           )}
         </aside>
