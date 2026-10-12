@@ -36,6 +36,7 @@ type BaseElement = {
   heightMm: number;
   rotation: 0 | 90 | 180 | 270;
   opacity: number;
+  locked: boolean;
 };
 
 type TextElement = BaseElement & {
@@ -113,6 +114,7 @@ export default function PdfVisualEditor({
   const assetsRef = useRef<Record<string, AssetEntry>>({});
   const pageUrlRef = useRef("");
   const thumbUrlsRef = useRef<Record<number, string>>({});
+  const clipboardRef = useRef<VisualElement | null>(null);
   const dragRef = useRef<null | {
     mode: "move" | "resize";
     id: string;
@@ -178,6 +180,7 @@ export default function PdfVisualEditor({
     setZoom(100);
     setCopyScope("next");
     setCopyPages("");
+    clipboardRef.current = null;
     setThumbUrls((old) => {
       Object.values(old).forEach((url) => URL.revokeObjectURL(url));
       return {};
@@ -258,6 +261,18 @@ export default function PdfVisualEditor({
         target?.tagName === "TEXTAREA" ||
         target?.tagName === "SELECT" ||
         target?.isContentEditable;
+      if (!typing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
+        if (selectedId) {
+          event.preventDefault();
+          copySelectedToClipboard();
+        }
+        return;
+      }
+      if (!typing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+        event.preventDefault();
+        pasteClipboard();
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         if (event.shiftKey) redo();
@@ -278,7 +293,7 @@ export default function PdfVisualEditor({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, selectedId, elements, undoStack, redoStack]);
+  }, [active, selectedId, elements, undoStack, redoStack, page]);
 
   useEffect(() => {
     return () => {
@@ -327,6 +342,7 @@ export default function PdfVisualEditor({
       heightMm: 28,
       rotation: 0,
       opacity: 1,
+      locked: false,
       text: "نص جديد",
       fontSizePt: 16,
       color: "#173645",
@@ -369,6 +385,7 @@ export default function PdfVisualEditor({
       heightMm: mode === "signature" ? 20 : 38,
       rotation: 0,
       opacity: 1,
+      locked: false,
       assetId,
       keepAspect: true,
     };
@@ -378,18 +395,92 @@ export default function PdfVisualEditor({
   }
 
   function deleteSelected() {
-    if (!selectedId) return;
+    if (!selectedId || selected?.locked) return;
     commit((current) => current.filter((item) => item.id !== selectedId));
     setSelectedId("");
   }
 
   function updateSelected(patch: Partial<VisualElement>) {
-    if (!selectedId) return;
+    if (!selectedId || selected?.locked) return;
     commit((current) =>
       current.map((item) =>
         item.id === selectedId ? ({ ...item, ...patch } as VisualElement) : item,
       ),
     );
+  }
+
+  function toggleSelectedLock() {
+    if (!selectedId) return;
+    commit((current) =>
+      current.map((item) =>
+        item.id === selectedId ? { ...item, locked: !item.locked } : item,
+      ),
+    );
+  }
+
+  function copySelectedToClipboard() {
+    if (!selected) return;
+    clipboardRef.current = { ...selected };
+    onNotice("تم نسخ العنصر. استخدم لصق أو Ctrl+V لإضافته إلى الصفحة الحالية.");
+  }
+
+  function pasteClipboard() {
+    const source = clipboardRef.current;
+    if (!source) {
+      onError("لا يوجد عنصر منسوخ للصق.");
+      return;
+    }
+    const targetInfo =
+      info.page_sizes.find((item) => item.page === page) ?? info.page_sizes[0]!;
+    const pasted = cloneElementToPage(source, page);
+    pasted.locked = false;
+    pasted.xMm = clamp(pasted.xMm + 5, 0, Math.max(0, targetInfo.width_mm - pasted.widthMm));
+    pasted.yMm = clamp(pasted.yMm + 5, 0, Math.max(0, targetInfo.height_mm - pasted.heightMm));
+    commit((current) => [...current, pasted]);
+    setSelectedId(pasted.id);
+    onNotice(`تم لصق العنصر في الصفحة ${page} كنسخة مستقلة.`);
+  }
+
+  function duplicateSelected() {
+    if (!selected) return;
+    clipboardRef.current = { ...selected };
+    pasteClipboard();
+  }
+
+  function moveSelectedLayer(direction: "forward" | "backward") {
+    if (!selected || selected.locked) return;
+    commit((current) => {
+      const samePageIndices = current
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => item.page === selected.page)
+        .map(({ index }) => index);
+      const currentGlobalIndex = current.findIndex((item) => item.id === selected.id);
+      const position = samePageIndices.indexOf(currentGlobalIndex);
+      const targetPosition = direction === "forward" ? position + 1 : position - 1;
+      if (position < 0 || targetPosition < 0 || targetPosition >= samePageIndices.length)
+        return current;
+      const targetGlobalIndex = samePageIndices[targetPosition]!;
+      const next = [...current];
+      [next[currentGlobalIndex], next[targetGlobalIndex]] = [
+        next[targetGlobalIndex]!,
+        next[currentGlobalIndex]!,
+      ];
+      return next;
+    });
+  }
+
+  function alignSelected(
+    alignment: "left" | "center-x" | "right" | "top" | "center-y" | "bottom",
+  ) {
+    if (!selected || selected.locked) return;
+    const patch: Partial<VisualElement> = {};
+    if (alignment === "left") patch.xMm = 0;
+    if (alignment === "center-x") patch.xMm = Math.max(0, (pageInfo.width_mm - selected.widthMm) / 2);
+    if (alignment === "right") patch.xMm = Math.max(0, pageInfo.width_mm - selected.widthMm);
+    if (alignment === "top") patch.yMm = 0;
+    if (alignment === "center-y") patch.yMm = Math.max(0, (pageInfo.height_mm - selected.heightMm) / 2);
+    if (alignment === "bottom") patch.yMm = Math.max(0, pageInfo.height_mm - selected.heightMm);
+    updateSelected(patch);
   }
 
   function cloneElementToPage(element: VisualElement, targetPage: number): VisualElement {
@@ -452,6 +543,7 @@ export default function PdfVisualEditor({
     event.preventDefault();
     event.stopPropagation();
     setSelectedId(element.id);
+    if (element.locked) return;
     const bounds = stage.getBoundingClientRect();
     dragRef.current = {
       mode,
@@ -618,7 +710,9 @@ export default function PdfVisualEditor({
           <button className="button outline" onClick={() => requestAsset("signature")} disabled={saving}>＋ توقيع</button>
           <button className="button outline" onClick={undo} disabled={!undoStack.length || saving} title="تراجع Ctrl+Z">↶</button>
           <button className="button outline" onClick={redo} disabled={!redoStack.length || saving} title="إعادة Ctrl+Y">↷</button>
-          <button className="button danger" onClick={deleteSelected} disabled={!selectedId || saving}>حذف</button>
+          <button className="button outline" onClick={copySelectedToClipboard} disabled={!selectedId || saving}>نسخ</button>
+          <button className="button outline" onClick={pasteClipboard} disabled={saving}>لصق</button>
+          <button className="button danger" onClick={deleteSelected} disabled={!selectedId || !!selected?.locked || saving}>حذف</button>
           <input
             ref={assetInput}
             type="file"
@@ -692,7 +786,7 @@ export default function PdfVisualEditor({
                   <div
                     key={element.id}
                     data-testid={`visual-element-${element.type}`}
-                    className={`pdf-canvas-element ${selectedNow ? "selected" : ""}`}
+                    className={`pdf-canvas-element ${selectedNow ? "selected" : ""} ${element.locked ? "locked" : ""}`}
                     style={commonStyle}
                     onPointerDown={(event) => beginDrag(event, element, "move")}
                     onPointerMove={moveDrag}
@@ -720,7 +814,7 @@ export default function PdfVisualEditor({
                         style={{ objectFit: element.keepAspect ? "contain" : "fill" }}
                       />
                     )}
-                    {selectedNow && (
+                    {selectedNow && !element.locked && (
                       <button
                         type="button"
                         className="pdf-resize-handle"
@@ -745,7 +839,35 @@ export default function PdfVisualEditor({
             <>
               <span className="pdf-element-type">
                 {selected.type === "text" ? "نص" : selected.type === "signature" ? "توقيع" : "صورة"}
+                {selected.locked ? " · مقفل" : ""}
               </span>
+
+              <div className="pdf-object-tools">
+                <strong>أدوات العنصر</strong>
+                <div className="pdf-object-tool-grid">
+                  <button type="button" onClick={duplicateSelected}>تكرار</button>
+                  <button type="button" onClick={copySelectedToClipboard}>نسخ</button>
+                  <button type="button" onClick={pasteClipboard}>لصق</button>
+                  <button type="button" onClick={toggleSelectedLock}>
+                    {selected.locked ? "فك القفل" : "قفل"}
+                  </button>
+                  <button type="button" onClick={() => moveSelectedLayer("forward")} disabled={selected.locked}>
+                    للأمام
+                  </button>
+                  <button type="button" onClick={() => moveSelectedLayer("backward")} disabled={selected.locked}>
+                    للخلف
+                  </button>
+                </div>
+                <strong>محاذاة داخل الصفحة</strong>
+                <div className="pdf-object-tool-grid compact">
+                  <button type="button" onClick={() => alignSelected("left")} disabled={selected.locked}>يسار</button>
+                  <button type="button" onClick={() => alignSelected("center-x")} disabled={selected.locked}>وسط أفقي</button>
+                  <button type="button" onClick={() => alignSelected("right")} disabled={selected.locked}>يمين</button>
+                  <button type="button" onClick={() => alignSelected("top")} disabled={selected.locked}>أعلى</button>
+                  <button type="button" onClick={() => alignSelected("center-y")} disabled={selected.locked}>وسط رأسي</button>
+                  <button type="button" onClick={() => alignSelected("bottom")} disabled={selected.locked}>أسفل</button>
+                </div>
+              </div>
 
               {selected.type === "text" && (
                 <>
@@ -754,6 +876,7 @@ export default function PdfVisualEditor({
                     <textarea
                       rows={4}
                       value={selected.text}
+                      disabled={selected.locked}
                       onChange={(event) => updateSelected({ text: event.target.value } as Partial<VisualElement>)}
                     />
                   </label>
@@ -765,6 +888,7 @@ export default function PdfVisualEditor({
                         min="6"
                         max="96"
                         value={selected.fontSizePt}
+                        disabled={selected.locked}
                         onChange={(event) => updateSelected({ fontSizePt: Number(event.target.value) } as Partial<VisualElement>)}
                       />
                     </label>
@@ -773,6 +897,7 @@ export default function PdfVisualEditor({
                       <input
                         type="color"
                         value={selected.color}
+                        disabled={selected.locked}
                         onChange={(event) => updateSelected({ color: event.target.value } as Partial<VisualElement>)}
                       />
                     </label>
@@ -782,6 +907,7 @@ export default function PdfVisualEditor({
                       المحاذاة
                       <select
                         value={selected.align}
+                        disabled={selected.locked}
                         onChange={(event) => updateSelected({ align: event.target.value as TextElement["align"] } as Partial<VisualElement>)}
                       >
                         <option value="right">يمين</option>
@@ -793,6 +919,7 @@ export default function PdfVisualEditor({
                       اتجاه النص
                       <select
                         value={selected.rtl ? "rtl" : "ltr"}
+                        disabled={selected.locked}
                         onChange={(event) => updateSelected({ rtl: event.target.value === "rtl" } as Partial<VisualElement>)}
                       >
                         <option value="rtl">العربية RTL</option>
@@ -804,6 +931,7 @@ export default function PdfVisualEditor({
                     <input
                       type="checkbox"
                       checked={selected.bold}
+                      disabled={selected.locked}
                       onChange={(event) => updateSelected({ bold: event.target.checked } as Partial<VisualElement>)}
                     />
                     خط عريض
@@ -816,6 +944,7 @@ export default function PdfVisualEditor({
                   <input
                     type="checkbox"
                     checked={selected.keepAspect}
+                    disabled={selected.locked}
                     onChange={(event) => updateSelected({ keepAspect: event.target.checked } as Partial<VisualElement>)}
                   />
                   الحفاظ على تناسب الصورة
@@ -825,21 +954,21 @@ export default function PdfVisualEditor({
               <div className="two-fields">
                 <label>
                   X (مم)
-                  <input type="number" step="0.5" value={selected.xMm.toFixed(1)} onChange={(event) => updateSelected({ xMm: Number(event.target.value) } as Partial<VisualElement>)} />
+                  <input type="number" step="0.5" value={selected.xMm.toFixed(1)} disabled={selected.locked} onChange={(event) => updateSelected({ xMm: Number(event.target.value) } as Partial<VisualElement>)} />
                 </label>
                 <label>
                   Y (مم)
-                  <input type="number" step="0.5" value={selected.yMm.toFixed(1)} onChange={(event) => updateSelected({ yMm: Number(event.target.value) } as Partial<VisualElement>)} />
+                  <input type="number" step="0.5" value={selected.yMm.toFixed(1)} disabled={selected.locked} onChange={(event) => updateSelected({ yMm: Number(event.target.value) } as Partial<VisualElement>)} />
                 </label>
               </div>
               <div className="two-fields">
                 <label>
                   العرض (مم)
-                  <input type="number" min="5" step="0.5" value={selected.widthMm.toFixed(1)} onChange={(event) => updateSelected({ widthMm: Number(event.target.value) } as Partial<VisualElement>)} />
+                  <input type="number" min="5" step="0.5" value={selected.widthMm.toFixed(1)} disabled={selected.locked} onChange={(event) => updateSelected({ widthMm: Number(event.target.value) } as Partial<VisualElement>)} />
                 </label>
                 <label>
                   الارتفاع (مم)
-                  <input type="number" min="5" step="0.5" value={selected.heightMm.toFixed(1)} onChange={(event) => updateSelected({ heightMm: Number(event.target.value) } as Partial<VisualElement>)} />
+                  <input type="number" min="5" step="0.5" value={selected.heightMm.toFixed(1)} disabled={selected.locked} onChange={(event) => updateSelected({ heightMm: Number(event.target.value) } as Partial<VisualElement>)} />
                 </label>
               </div>
               <div className="two-fields">
@@ -847,6 +976,7 @@ export default function PdfVisualEditor({
                   التدوير
                   <select
                     value={selected.rotation}
+                    disabled={selected.locked}
                     onChange={(event) => updateSelected({ rotation: Number(event.target.value) as BaseElement["rotation"] } as Partial<VisualElement>)}
                   >
                     <option value="0">0°</option>
@@ -863,6 +993,7 @@ export default function PdfVisualEditor({
                     max="1"
                     step="0.05"
                     value={selected.opacity}
+                    disabled={selected.locked}
                     onChange={(event) => updateSelected({ opacity: Number(event.target.value) } as Partial<VisualElement>)}
                   />
                 </label>
@@ -907,7 +1038,7 @@ export default function PdfVisualEditor({
                 </div>
               )}
 
-              <button className="button danger full" onClick={deleteSelected}>حذف العنصر</button>
+              <button className="button danger full" onClick={deleteSelected} disabled={selected.locked}>حذف العنصر</button>
             </>
           )}
         </aside>
