@@ -530,7 +530,7 @@ export default function PdfVisualEditor({
           <span className="welcome-label">VISUAL PDF EDITOR</span>
           <h3>المحرر المرئي</h3>
           <p className="muted small">
-            أضف عدة صور ونصوص وتواقيع، ثم حرّكها وكبّرها قبل حفظ PDF مرة واحدة.
+            أضف عدة صور ونصوص وتواقيع، ثم حرّكها وكبّرها قبل حفظ PDF مرة واحدة. كل عنصر يرتبط بالصفحة التي أُضيف إليها فقط.
           </p>
         </div>
         <div className="pdf-visual-toolbar" role="toolbar" aria-label="أدوات المحرر المرئي">
