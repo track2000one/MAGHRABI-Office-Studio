@@ -289,8 +289,9 @@ it("inserts an image into selected PDF pages with placement controls", async () 
   await user.upload(imageInput, image);
   expect(await screen.findByText("logo.png")).toBeVisible();
 
-  await user.clear(screen.getByLabelText("الصفحات المستهدفة"));
-  await user.type(screen.getByLabelText("الصفحات المستهدفة"), "1,3");
+  await user.selectOptions(screen.getByLabelText("نطاق تطبيق الصورة"), "selected");
+  await user.clear(screen.getByLabelText("الصفحات المحددة"));
+  await user.type(screen.getByLabelText("الصفحات المحددة"), "1,3");
   await user.selectOptions(screen.getByLabelText("موضع الصورة"), "custom");
   await user.clear(screen.getByLabelText("X من اليسار (مم)"));
   await user.type(screen.getByLabelText("X من اليسار (مم)"), "22");
@@ -324,6 +325,69 @@ it("inserts an image into selected PDF pages with placement controls", async () 
   });
 });
 
+
+
+it("defaults quick image insertion to the current PDF page only", async () => {
+  URL.createObjectURL = vi.fn(() => "blob:page-scope");
+  URL.revokeObjectURL = vi.fn();
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  const analysis = {
+    filename: "sample.pdf",
+    size_bytes: 1200,
+    pages: 3,
+    text_chars: 60,
+    metadata: {},
+    page_sizes: [
+      { page: 1, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+      { page: 2, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+      { page: 3, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+    ],
+    supported_sizes: ["A4", "CUSTOM"],
+  };
+
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    const path = String(url);
+    if (path.endsWith("/pdf/analyze"))
+      return new Response(JSON.stringify(analysis), { status: 200 });
+    if (path.endsWith("/pdf/render-page"))
+      return new Response(new Blob(["png"], { type: "image/png" }), {
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+      });
+    if (path.endsWith("/pdf/insert-image"))
+      return new Response(new Blob(["edited-pdf"], { type: "application/pdf" }), {
+        status: 200,
+        headers: { "Content-Type": "application/pdf" },
+      });
+    return new Response(JSON.stringify({ configured: false }), { status: 200 });
+  });
+
+  const user = userEvent.setup();
+  const { container } = render(<App />);
+  await user.click(screen.getByRole("button", { name: /^تحرير PDF$/ }));
+
+  const pdf = new File(["fake-pdf"], "sample.pdf", { type: "application/pdf" });
+  const pdfInput = container.querySelector('input[type="file"][accept*=".pdf"]:not([multiple])') as HTMLInputElement;
+  await user.upload(pdfInput, pdf);
+  await screen.findByText(/3 صفحة/);
+
+  const imageInput = container.querySelector('input[type="file"][accept*=".png"]') as HTMLInputElement;
+  await user.upload(imageInput, new File(["image"], "logo.png", { type: "image/png" }));
+
+  expect(screen.getByLabelText("نطاق تطبيق الصورة")).toHaveValue("current");
+  expect(screen.getByText(/لن تظهر تلقائيًا في بقية الصفحات/)).toBeVisible();
+
+  await user.selectOptions(screen.getByLabelText("الصفحة الحالية / المعاينة"), "2");
+  await user.click(screen.getByRole("button", { name: "إدراج الصورة وتنزيل PDF" }));
+
+  await waitFor(() => {
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/pdf/insert-image"));
+    expect(call).toBeTruthy();
+    const body = call![1]!.body as FormData;
+    expect(body.get("image_pages")).toBe("2");
+  });
+});
 
 it("supports free drag placement of an image over a rendered PDF page", async () => {
   URL.createObjectURL = vi.fn(() => "blob:visual");
@@ -473,6 +537,12 @@ it("uses the unified visual PDF editor and saves multiple elements in one reques
   const assetInput = visualEditor.querySelector('input[type="file"][accept*=".png"]') as HTMLInputElement;
   const logo = new File(["image"], "logo.png", { type: "image/png" });
   await user.upload(assetInput, logo);
+  expect(screen.getByTestId("visual-element-image")).toBeVisible();
+
+  const thumbnails = Array.from(container.querySelectorAll(".pdf-thumb")) as HTMLButtonElement[];
+  await user.click(thumbnails[1]!);
+  expect(screen.queryByTestId("visual-element-image")).not.toBeInTheDocument();
+  await user.click(thumbnails[0]!);
   expect(screen.getByTestId("visual-element-image")).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "تطبيق جميع العناصر وحفظ PDF" }));
