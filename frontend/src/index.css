@@ -945,6 +945,20 @@ textarea::placeholder {
   font-weight: 700;
   direction: ltr;
 }
+
+.pdf-page-scope-note {
+  margin: -4px 0 12px;
+  padding: 9px 11px;
+  border: 1px solid #dce8ec;
+  border-radius: 9px;
+  background: #f5f9fa;
+}
+.pdf-page-scope-note.warning {
+  border-color: #ead9b3;
+  background: #fff9eb;
+  color: #806329;
+}
+
 .pdf-image-selected {
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr);

@@ -66,6 +66,7 @@ export default function PdfStudio() {
   const [visualPage, setVisualPage] = useState(1);
   const [visualBusy, setVisualBusy] = useState(false);
 
+  const [imagePageScope, setImagePageScope] = useState<"current" | "selected" | "all">("current");
   const [imagePages, setImagePages] = useState("");
   const [imagePosition, setImagePosition] = useState("free");
   const [imageWidth, setImageWidth] = useState("40");
@@ -170,7 +171,7 @@ export default function PdfStudio() {
     if (rememberOriginal) setOriginal(next);
     setPageOrder(`1-${result.pages}`);
     setRotatePages(`1-${result.pages}`);
-    setImagePages(`1-${result.pages}`);
+    setImagePages("");
     setVisualPage((current) => Math.min(Math.max(current, 1), result.pages));
 
     const url = URL.createObjectURL(next);
@@ -322,6 +323,16 @@ export default function PdfStudio() {
       setError("اختر صورة أولًا.");
       return;
     }
+    const targetPages =
+      imagePageScope === "all"
+        ? allPages
+        : imagePageScope === "selected"
+          ? imagePages.trim()
+          : String(visualPage);
+    if (!targetPages) {
+      setError("حدد الصفحات التي تريد تطبيق الصورة عليها.");
+      return;
+    }
     setBusy("جارٍ إدراج الصورة على PDF…");
     setError("");
     setNotice("");
@@ -329,7 +340,7 @@ export default function PdfStudio() {
       const form = new FormData();
       form.append("file", file);
       form.append("image", imageFile);
-      form.append("image_pages", imagePages.trim() || allPages);
+      form.append("image_pages", targetPages);
       form.append("position", imagePosition === "free" ? "custom" : imagePosition);
       form.append("width_mm", imageWidth || "40");
       form.append("height_mm", imageHeight || "40");
@@ -347,7 +358,7 @@ export default function PdfStudio() {
       });
       downloadBlob(blob, edited.name);
       await analyze(edited, false);
-      setNotice("تم إدراج الصورة وتنزيل PDF. يمكنك إبقاء الصورة الحالية وإدراجها مرة أخرى بموضع مختلف، أو اختيار صورة أخرى.");
+      setNotice(`تم إدراج الصورة في ${imagePageScope === "current" ? `الصفحة ${visualPage}` : imagePageScope === "all" ? "جميع الصفحات" : "الصفحات المحددة"} وتنزيل PDF.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "تعذر إدراج الصورة على PDF.");
     } finally {
@@ -401,7 +412,8 @@ export default function PdfStudio() {
     setPageOrder(`1-${info.pages}`);
     setRotate("0");
     setRotatePages(`1-${info.pages}`);
-    setImagePages(`1-${info.pages}`);
+    setImagePageScope("current");
+    setImagePages("");
     setImagePosition("free");
     setImageWidth("40");
     setImageHeight("40");
@@ -707,13 +719,39 @@ export default function PdfStudio() {
               )}
 
               <label>
-                الصفحات المستهدفة
-                <input
-                  value={imagePages}
-                  onChange={(e) => setImagePages(e.target.value)}
-                  placeholder="all أو 1-3,5"
-                />
+                نطاق تطبيق الصورة
+                <select
+                  value={imagePageScope}
+                  onChange={(e) => setImagePageScope(e.target.value as "current" | "selected" | "all")}
+                >
+                  <option value="current">الصفحة الحالية فقط</option>
+                  <option value="selected">صفحات محددة</option>
+                  <option value="all">جميع الصفحات</option>
+                </select>
               </label>
+
+              {imagePageScope === "selected" && (
+                <label>
+                  الصفحات المحددة
+                  <input
+                    value={imagePages}
+                    onChange={(e) => setImagePages(e.target.value)}
+                    placeholder="مثال: 1,3,5-7"
+                  />
+                </label>
+              )}
+
+              {imagePageScope === "current" && (
+                <p className="muted small pdf-page-scope-note">
+                  ستُضاف الصورة إلى الصفحة {visualPage} فقط، ولن تظهر تلقائيًا في بقية الصفحات.
+                </p>
+              )}
+
+              {imagePageScope === "all" && (
+                <p className="muted small pdf-page-scope-note warning">
+                  سيتم تكرار الصورة على جميع صفحات الملف.
+                </p>
+              )}
 
               <label>
                 موضع الصورة
@@ -729,9 +767,13 @@ export default function PdfStudio() {
                 </select>
               </label>
 
-              {imagePosition === "free" && info && (
+              {(imagePosition === "free" || imagePageScope === "current") && info && (
                 <label>
-                  صفحة المعاينة الحرة
+                  {imagePosition === "free" && imagePageScope === "current"
+                    ? "الصفحة الحالية / المعاينة"
+                    : imagePosition === "free"
+                      ? "صفحة المعاينة"
+                      : "الصفحة الحالية"}
                   <select value={visualPage} onChange={(e) => setVisualPage(Number(e.target.value))}>
                     {Array.from({ length: info.pages }, (_, index) => index + 1).map((page) => (
                       <option key={page} value={page}>صفحة {page}</option>
