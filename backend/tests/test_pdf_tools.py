@@ -308,3 +308,41 @@ def test_pdf_visual_editor_rejects_missing_asset_reference():
         data={"elements_json": json.dumps(elements)},
     )
     assert response.status_code == 422
+
+
+def test_pdf_manage_pages_reorders_duplicates_deletes_and_rotates():
+    data = make_pdf(page_sizes=((300, 400), (300, 400), (300, 400)))
+    response = client.post(
+        "/api/v1/pdf/manage-pages",
+        files={"file": ("sample.pdf", data, "application/pdf")},
+        data={
+            "page_plan_json": json.dumps(
+                [
+                    {"source_page": 3, "rotation": 90},
+                    {"source_page": 1, "rotation": 0},
+                    {"source_page": 3, "rotation": 0},
+                ]
+            )
+        },
+    )
+    assert response.status_code == 200
+    edited = pymupdf.open(stream=response.content, filetype="pdf")
+    try:
+        assert edited.page_count == 3
+        assert "page 3" in edited[0].get_text("text")
+        assert "page 1" in edited[1].get_text("text")
+        assert "page 3" in edited[2].get_text("text")
+        assert edited[0].rotation == 90
+        assert edited[1].rotation == 0
+    finally:
+        edited.close()
+
+
+def test_pdf_manage_pages_rejects_empty_plan():
+    data = make_pdf(page_sizes=((300, 400),))
+    response = client.post(
+        "/api/v1/pdf/manage-pages",
+        files={"file": ("sample.pdf", data, "application/pdf")},
+        data={"page_plan_json": "[]"},
+    )
+    assert response.status_code == 422
