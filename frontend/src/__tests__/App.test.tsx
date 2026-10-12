@@ -571,3 +571,136 @@ it("uses the unified visual PDF editor and saves multiple elements in one reques
     expect(body.getAll("assets")).toHaveLength(1);
   });
 });
+
+
+it("manages PDF pages visually before applying changes", async () => {
+  URL.createObjectURL = vi.fn(() => "blob:page-manager");
+  URL.revokeObjectURL = vi.fn();
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  const analysis = {
+    filename: "sample.pdf",
+    size_bytes: 1200,
+    pages: 3,
+    text_chars: 60,
+    metadata: {},
+    page_sizes: [
+      { page: 1, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+      { page: 2, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+      { page: 3, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+    ],
+    supported_sizes: ["A4", "CUSTOM"],
+  };
+
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    const path = String(url);
+    if (path.endsWith("/pdf/analyze"))
+      return new Response(JSON.stringify(analysis), { status: 200 });
+    if (path.endsWith("/pdf/render-page"))
+      return new Response(new Blob(["png"], { type: "image/png" }), {
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+      });
+    if (path.endsWith("/pdf/manage-pages"))
+      return new Response(new Blob(["managed-pdf"], { type: "application/pdf" }), {
+        status: 200,
+        headers: { "Content-Type": "application/pdf" },
+      });
+    return new Response(JSON.stringify({ configured: false }), { status: 200 });
+  });
+
+  const user = userEvent.setup();
+  const { container } = render(<App />);
+  await user.click(screen.getByRole("button", { name: /^تحرير PDF$/ }));
+
+  const pdf = new File(["fake-pdf"], "sample.pdf", { type: "application/pdf" });
+  const pdfInput = container.querySelector('input[type="file"][accept*=".pdf"]:not([multiple])') as HTMLInputElement;
+  await user.upload(pdfInput, pdf);
+  await screen.findByText(/3 صفحة/);
+
+  await user.click(screen.getByRole("button", { name: "فتح إدارة الصفحات" }));
+  const manager = container.querySelector(".pdf-page-manager") as HTMLElement;
+  expect(manager).toBeTruthy();
+
+  const cards = () => Array.from(manager.querySelectorAll(".pdf-page-card")) as HTMLElement[];
+  expect(cards()).toHaveLength(3);
+
+  const firstActions = cards()[0]!.querySelector(".pdf-page-card-actions") as HTMLElement;
+  await user.click(Array.from(firstActions.querySelectorAll("button")).find((button) => button.textContent === "تدوير")!);
+  await user.click(Array.from(firstActions.querySelectorAll("button")).find((button) => button.textContent === "نسخ")!);
+  expect(cards()).toHaveLength(4);
+
+  await user.click(screen.getByRole("button", { name: "اعتماد تغييرات الصفحات" }));
+
+  await waitFor(() => {
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/pdf/manage-pages"));
+    expect(call).toBeTruthy();
+    const body = call![1]!.body as FormData;
+    const plan = JSON.parse(String(body.get("page_plan_json")));
+    expect(plan).toHaveLength(4);
+    expect(plan[0]).toEqual({ source_page: 1, rotation: 90 });
+    expect(plan[1]).toEqual({ source_page: 1, rotation: 90 });
+  });
+});
+
+
+it("provides professional object tools for visual PDF elements", async () => {
+  URL.createObjectURL = vi.fn(() => "blob:object-tools");
+  URL.revokeObjectURL = vi.fn();
+
+  const analysis = {
+    filename: "sample.pdf",
+    size_bytes: 1200,
+    pages: 1,
+    text_chars: 20,
+    metadata: {},
+    page_sizes: [
+      { page: 1, width_mm: 210, height_mm: 297, orientation: "portrait", rotation: 0, text_chars: 20 },
+    ],
+    supported_sizes: ["A4", "CUSTOM"],
+  };
+
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    const path = String(url);
+    if (path.endsWith("/pdf/analyze"))
+      return new Response(JSON.stringify(analysis), { status: 200 });
+    if (path.endsWith("/pdf/render-page"))
+      return new Response(new Blob(["png"], { type: "image/png" }), {
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+      });
+    return new Response(JSON.stringify({ configured: false }), { status: 200 });
+  });
+
+  const user = userEvent.setup();
+  const { container } = render(<App />);
+  await user.click(screen.getByRole("button", { name: /^تحرير PDF$/ }));
+
+  const pdf = new File(["fake-pdf"], "sample.pdf", { type: "application/pdf" });
+  const pdfInput = container.querySelector('input[type="file"][accept*=".pdf"]:not([multiple])') as HTMLInputElement;
+  await user.upload(pdfInput, pdf);
+  await screen.findByText(/1 صفحة/);
+
+  await user.click(screen.getByRole("button", { name: "فتح المحرر المرئي" }));
+  await user.click(screen.getByRole("button", { name: "＋ صورة" }));
+
+  const visualEditor = container.querySelector(".pdf-visual-editor") as HTMLElement;
+  const assetInput = visualEditor.querySelector('input[type="file"][accept*=".png"]') as HTMLInputElement;
+  await user.upload(assetInput, new File(["image"], "logo.png", { type: "image/png" }));
+
+  const original = screen.getByTestId("visual-element-image");
+  await user.click(original);
+  expect(screen.getByText("أدوات العنصر")).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "تكرار" }));
+  expect(screen.getAllByTestId("visual-element-image")).toHaveLength(2);
+
+  await user.click(screen.getByRole("button", { name: "قفل" }));
+  expect(screen.getByRole("button", { name: "فك القفل" })).toBeVisible();
+  expect(screen.getByLabelText("X (مم)")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "حذف العنصر" })).toBeDisabled();
+
+  await user.click(screen.getByRole("button", { name: "فك القفل" }));
+  await user.click(screen.getByRole("button", { name: "يمين" }));
+  expect(screen.getByLabelText("X (مم)")).toHaveValue(155);
+});
