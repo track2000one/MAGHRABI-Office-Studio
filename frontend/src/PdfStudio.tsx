@@ -1,6 +1,7 @@
 import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import PdfVisualEditor from "./PdfVisualEditor";
+import PdfPageManager from "./PdfPageManager";
 
 type PdfPageInfo = {
   page: number;
@@ -894,6 +895,19 @@ export default function PdfStudio() {
             </section>
 
             <div className="pdf-preview-column">
+              {info && (
+                <PdfPageManager
+                  file={file}
+                  info={info}
+                  onApplied={async (edited) => {
+                    downloadBlob(edited, edited.name);
+                    await analyze(edited, false);
+                  }}
+                  onError={setError}
+                  onNotice={setNotice}
+                />
+              )}
+
               {info && (
                 <PdfVisualEditor
                   file={file}
