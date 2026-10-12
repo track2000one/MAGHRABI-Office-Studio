@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
 from . import ai
 from .exports import export_docx, export_pptx, format_docx
-from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
+from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
 from pptx import Presentation
 
@@ -260,6 +260,27 @@ async def pdf_edit(
         optimize=optimize,
     )
     return download(result, 'pdf', 'MAGHRABI-edited')
+
+
+@app.post('/api/v1/pdf/manage-pages')
+async def pdf_manage_pages(
+    file: UploadFile = File(...),
+    page_plan_json: str = Form("[]"),
+):
+    if Path(file.filename or '').suffix.lower() != '.pdf':
+        raise HTTPException(415, "اختر ملف PDF.")
+    data = await file.read(MAX_PDF_UPLOAD + 1)
+    if len(data) > MAX_PDF_UPLOAD:
+        raise HTTPException(413, "حجم ملف PDF يتجاوز 30 ميجابايت.")
+
+    try:
+        page_plan = json.loads(page_plan_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, "بيانات إدارة الصفحات غير صالحة.") from exc
+    if not isinstance(page_plan, list):
+        raise HTTPException(422, "بيانات إدارة الصفحات يجب أن تكون قائمة.")
+
+    return download(manage_pdf_pages(data, page_plan), 'pdf', 'MAGHRABI-pages')
 
 
 @app.post('/api/v1/pdf/render-page')
