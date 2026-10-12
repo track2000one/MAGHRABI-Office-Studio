@@ -281,6 +281,52 @@ def edit_pdf(
         work.close()
 
 
+
+def manage_pdf_pages(data: bytes, page_plan: list[dict]) -> bytes:
+    source = open_pdf(data)
+    try:
+        if not page_plan:
+            raise HTTPException(422, "يجب الإبقاء على صفحة واحدة على الأقل.")
+        if len(page_plan) > 500:
+            raise HTTPException(422, "عدد الصفحات الناتج يتجاوز الحد المسموح.")
+
+        output = pymupdf.open()
+        try:
+            for item in page_plan:
+                if not isinstance(item, dict):
+                    raise HTTPException(422, "بيانات إحدى الصفحات غير صالحة.")
+                try:
+                    source_page = int(item.get("source_page", 0))
+                    rotation = int(item.get("rotation", 0))
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(422, "بيانات إحدى الصفحات غير صالحة.") from exc
+
+                if source_page < 1 or source_page > source.page_count:
+                    raise HTTPException(
+                        422,
+                        f"رقم الصفحة الأصلية يجب أن يكون بين 1 و{source.page_count}.",
+                    )
+                if rotation not in (0, 90, 180, 270):
+                    raise HTTPException(422, "تدوير الصفحة يجب أن يكون 0 أو 90 أو 180 أو 270 درجة.")
+
+                output.insert_pdf(
+                    source,
+                    from_page=source_page - 1,
+                    to_page=source_page - 1,
+                )
+                if rotation:
+                    page = output[output.page_count - 1]
+                    page.set_rotation((page.rotation + rotation) % 360)
+
+            metadata = {key: value for key, value in source.metadata.items() if value}
+            if metadata:
+                output.set_metadata(metadata)
+            return output.tobytes(garbage=4, deflate=True, clean=True)
+        finally:
+            output.close()
+    finally:
+        source.close()
+
 def merge_pdfs(files: list[bytes]) -> bytes:
     if len(files) < 2:
         raise HTTPException(422, "اختر ملفي PDF على الأقل للدمج.")
