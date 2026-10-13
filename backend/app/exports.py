@@ -30,25 +30,10 @@ def paragraph_style(paragraph, rtl=True):
             fonts.set(qn('w:cs'), 'Arial')
 
 
-def export_docx(content: Content) -> bytes:
-    doc = Document()
-    section = doc.sections[0]
-    section.top_margin = section.bottom_margin = DocInches(.8)
-    section.left_margin = section.right_margin = DocInches(.85)
-    doc.styles['Normal'].font.name = 'Arial'
-    doc.styles['Normal'].font.size = DocPt(12)
-    doc.add_heading(content.title, 0)
-    if content.summary:
-        doc.add_paragraph(content.summary)
-    for item in content.sections:
-        doc.add_heading(item.title, 1)
-        for body in item.body:
-            doc.add_paragraph(body)
-    for paragraph in doc.paragraphs:
-        paragraph_style(paragraph, content.language == 'ar')
-    output = BytesIO()
-    doc.save(output)
-    return output.getvalue()
+def export_docx(content: Content, design_style: str = "luxury") -> bytes:
+    """Premium fully editable DOCX output; retain legacy function/API entrypoint."""
+    from .word_design import export_premium_docx
+    return export_premium_docx(content, design_style)
 
 
 def format_docx(data: bytes) -> bytes:
