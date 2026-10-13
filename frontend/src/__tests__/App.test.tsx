@@ -113,9 +113,14 @@ describe("Office Studio workflows", () => {
       new Response(JSON.stringify({ configured: true })),
     );
     render(<App />);
-    expect(await screen.findByText("الذكاء الاصطناعي متصل")).toBeVisible();
+    expect(await screen.findByText("الخدمة متصلة · يلزم تسجيل الدخول")).toBeVisible();
     await user.click(screen.getByRole("button", { name: /إعدادات الاتصال/ }));
     await user.type(screen.getByLabelText("رمز الوصول للمنصة"), "test-token");
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ authenticated: true }), { status: 200 }),
+    );
+    await user.click(screen.getByRole("button", { name: "تسجيل الدخول وتفعيل الذكاء الاصطناعي" }));
+    expect(await screen.findByText(/تم تسجيل الدخول بنجاح/)).toBeVisible();
     await user.click(
       screen.getByRole("button", { name: "العودة إلى إنشاء المحتوى" }),
     );
@@ -146,7 +151,10 @@ describe("Office Studio workflows", () => {
       "الهدف المعدل",
     );
     expect(localStorage.getItem("test-token")).toBeNull();
-    expect(sessionStorage.getItem("maghrabi-office-access-token-v1")).toBe("test-token");
+    expect(sessionStorage.getItem("maghrabi-office-access-token-v1")).toBeNull();
+    const login = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/ai/login"))!;
+    expect(JSON.parse(login[1]!.body as string).access_token).toBe("test-token");
+    expect(login[1]!.credentials).toBe("same-origin");
   });
 });
 
@@ -168,16 +176,18 @@ it("never evicts saved projects when the capacity is reached", async () => {
 });
 
 
-it("restores the access token from session storage after a page reload", async () => {
+it("restores authenticated cookie sessions and clears old browser-stored tokens", async () => {
   sessionStorage.setItem("maghrabi-office-access-token-v1", "saved-session-token");
   vi.mocked(fetch).mockResolvedValueOnce(
-    new Response(JSON.stringify({ configured: true }), { status: 200 }),
+    new Response(JSON.stringify({ configured: true, authenticated: true }), { status: 200 }),
   );
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText("الذكاء الاصطناعي متصل");
+  await screen.findByText("الذكاء الاصطناعي جاهز للاستخدام");
   await user.click(screen.getByRole("button", { name: /إعدادات الاتصال/ }));
-  expect(screen.getByLabelText("رمز الوصول للمنصة")).toHaveValue("saved-session-token");
+  expect(screen.getByText("مسجل الدخول")).toBeVisible();
+  expect(screen.queryByLabelText("رمز الوصول للمنصة")).not.toBeInTheDocument();
+  expect(sessionStorage.getItem("maghrabi-office-access-token-v1")).toBeNull();
 });
 
 
