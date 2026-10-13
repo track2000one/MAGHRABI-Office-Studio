@@ -24,6 +24,7 @@ class GenerateRequest(BaseModel):
     language: Literal['ar', 'en'] = 'ar'
     tone: Literal['formal', 'educational', 'concise'] = 'formal'
     format: Literal['docx', 'pptx'] = 'pptx'
+    document_type: Literal['general', 'report', 'study', 'strategy', 'letter'] = 'general'
     section_count: int = Field(default=6, ge=2, le=12)
     phase: Literal['outline', 'draft'] = 'outline'
     outline: list[Annotated[str, Field(min_length=1, max_length=160)]] = Field(default_factory=list, max_length=12)
