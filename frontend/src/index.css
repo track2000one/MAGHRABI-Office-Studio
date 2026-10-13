@@ -1918,3 +1918,34 @@ textarea::placeholder {
 .document-preview--minimal h3 {
   padding-bottom: 8px;
 }
+
+
+/* Specialized Word document labels are a preview aid, not official letterheads. */
+.document-kind-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #657788;
+  letter-spacing: .01em;
+  border-bottom: 1px solid #e4e9ed;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+.document-preview-kind--letter {
+  min-height: 410px;
+  padding-top: 42px;
+}
+.document-preview-kind--letter .document-kind-label {
+  display: none;
+}
+.document-preview-kind--letter h2 {
+  font-size: 20px;
+  margin-bottom: 26px;
+  border-bottom: 1px solid #d7e1e8;
+  padding-bottom: 18px;
+}
+.document-preview-kind--letter h3 {
+  font-size: 14px;
+  border: 0;
+  padding-bottom: 0;
+}
