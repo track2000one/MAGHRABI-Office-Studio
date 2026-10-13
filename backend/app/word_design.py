@@ -64,6 +64,11 @@ def _paragraph_direction(paragraph, rtl: bool):
         direction = OxmlElement("w:bidi")
         properties.append(direction)
     direction.set(qn("w:val"), "1" if rtl else "0")
+    if rtl:
+        # Logical start is supported by Word and LibreOffice for RTL text.
+        justification = properties.find(qn("w:jc"))
+        if justification is not None:
+            justification.set(qn("w:val"), "start")
     for run in paragraph.runs:
         run.font.complex_script = rtl
         fonts = run._r.get_or_add_rPr().rFonts
