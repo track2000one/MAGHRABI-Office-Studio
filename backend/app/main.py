@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .document_customization import WordCustomization, MAX_LOGO_BYTES, validate_logo_bytes
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
 from . import ai, ai_session
@@ -297,7 +298,8 @@ async def docx_custom_export(
             await logo.close()
     docx_data = export_docx(content, design_style, document_type, customization, logo_data)
     if preview:
-        return render_word_preview(docx_data)
+        # The multipart route is async; LibreOffice conversion must not block the event loop.
+        return await run_in_threadpool(render_word_preview, docx_data)
     return download(docx_data, 'docx', 'MAGHRABI-document')
 
 
