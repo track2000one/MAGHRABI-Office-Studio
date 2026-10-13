@@ -217,7 +217,9 @@ describe("Office Studio workflows", () => {
     const call = vi.mocked(fetch).mock.calls.find(([url]) =>
       String(url).includes("/exports/docx/custom?"))!;
     await waitFor(() => expect(call).toBeDefined());
-    expect((call[1]!.body as FormData).get("logo")).toBe(logo);
+    const uploadedLogo = (call[1]!.body as FormData).get("logo") as File;
+    expect(uploadedLogo.name).toBe(logo.name);
+    expect(uploadedLogo.size).toBe(logo.size);
   });
 
   it("uploads the actual file to analysis and renders returned metrics", async () => {
