@@ -10,6 +10,7 @@ from pathlib import Path
 import os
 import subprocess
 import tempfile
+from threading import BoundedSemaphore
 
 import fitz
 from fastapi import HTTPException
@@ -19,9 +20,19 @@ PREVIEW_TIMEOUT_SECONDS = 50
 MAX_PREVIEW_PAGES = 80
 MAX_PREVIEW_PDF_BYTES = 20 * 1024 * 1024
 MAX_PREVIEW_DOCX_BYTES = 8 * 1024 * 1024
+_PREVIEW_SLOTS = BoundedSemaphore(2)
 
 
 def render_word_preview(docx_data: bytes) -> Response:
+    if not _PREVIEW_SLOTS.acquire(blocking=False):
+        raise HTTPException(429, "خدمة معاينة الصفحات مشغولة حاليًا؛ حاول بعد قليل.")
+    try:
+        return _render_word_preview(docx_data)
+    finally:
+        _PREVIEW_SLOTS.release()
+
+
+def _render_word_preview(docx_data: bytes) -> Response:
     if not docx_data or len(docx_data) > MAX_PREVIEW_DOCX_BYTES:
         raise HTTPException(413, "حجم مستند Word كبير جدًا للمعاينة؛ حاول اختصار المحتوى.")
     try:
