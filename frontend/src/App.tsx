@@ -123,6 +123,8 @@ export default function App() {
     }
   }
   useEffect(() => {
+    // Discard legacy plaintext credentials previously saved in sessionStorage.
+    sessionStorage.removeItem("maghrabi-office-access-token-v1");
     void checkStatus();
   }, []);
   async function run(label: string, fn: () => Promise<void>) {
