@@ -254,8 +254,8 @@ def revise_content(request: ReviseRequest, http_request: Request, authorization:
 
 
 @app.post('/api/v1/exports/docx')
-def docx_export(content: Content):
-    return download(export_docx(content), 'docx', 'MAGHRABI-document')
+def docx_export(content: Content, design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury'):
+    return download(export_docx(content, design_style), 'docx', 'MAGHRABI-document')
 
 
 @app.post('/api/v1/exports/pptx')
