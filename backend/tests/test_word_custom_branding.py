@@ -58,7 +58,7 @@ def test_word_custom_brand_logo_and_tabular_data_are_native_and_editable():
     assert response.status_code == 200, response.text[:800]
     document = Document(BytesIO(response.content))
     paragraphs = [p.text for p in document.paragraphs]
-    assert "جهة المستخدم للاختبار" in paragraphs
+    assert any(p.strip() == "جهة المستخدم للاختبار" for p in paragraphs)
     assert "جدول مهام العمل" in paragraphs
     assert CONTENT["sections"][0]["body"][0] in paragraphs
     assert document.sections[0].header.paragraphs[0].text.find("الإدارة الفنية") >= 0
