@@ -120,7 +120,7 @@ describe("Office Studio workflows", () => {
       new Response(JSON.stringify({ authenticated: true }), { status: 200 }),
     );
     await user.click(screen.getByRole("button", { name: "تسجيل الدخول وتفعيل الذكاء الاصطناعي" }));
-    expect(await screen.findByText(/تم تسجيل الدخول بنجاح/)).toBeVisible();
+    expect(await screen.findByRole("status")).toHaveTextContent("تم تسجيل الدخول بنجاح");
     await user.click(
       screen.getByRole("button", { name: "العودة إلى إنشاء المحتوى" }),
     );
