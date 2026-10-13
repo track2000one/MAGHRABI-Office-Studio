@@ -11,6 +11,47 @@ type Analysis = {
   metrics: Record<string, unknown>;
   analysis_note: string;
 };
+type LayoutSettings = {
+  logoAlignment: "start" | "center" | "end";
+  logoPlacement: "both" | "cover" | "header";
+  headerAlignment: "start" | "center" | "end";
+  footerAlignment: "start" | "center" | "end";
+  pageOrientation: "portrait" | "landscape";
+  pageMargins: "compact" | "standard" | "spacious";
+  bodyFontSize: 10 | 11 | 12 | 13;
+  showPageNumbers: boolean;
+};
+const defaultLayout: LayoutSettings = {
+  logoAlignment: "start", logoPlacement: "both", headerAlignment: "start",
+  footerAlignment: "start", pageOrientation: "portrait",
+  pageMargins: "standard", bodyFontSize: 11, showPageNumbers: true,
+};
+type SavedDesign = {
+  id: string;
+  name: string;
+  documentStyle: "luxury" | "corporate" | "minimal";
+  documentType: DocumentType;
+  brand: BrandFields;
+  layout: LayoutSettings;
+};
+const DESIGN_STORAGE = "maghrabi-office-word-designs-v1";
+function readDesigns(): SavedDesign[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(DESIGN_STORAGE) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is SavedDesign => {
+      if (!item || typeof item !== "object") return false;
+      const v = item as Partial<SavedDesign>;
+      return typeof v.id === "string" && typeof v.name === "string" &&
+        v.name.length <= 60 && !!v.layout && typeof v.layout === "object" &&
+        !!v.brand && typeof v.brand === "object" &&
+        ["luxury", "corporate", "minimal"].includes(v.documentStyle || "") &&
+        Object.keys(documentTypeLabels).includes(v.documentType || "");
+    }).slice(0, 12);
+  } catch {
+    return [];
+  }
+}
 type BrandFields = {
   organizationName: string;
   headerText: string;
@@ -21,7 +62,7 @@ type BrandFields = {
 const emptyBrandFields: BrandFields = {
   organizationName: "", headerText: "", footerText: "", tableTitle: "", tableTSV: "",
 };
-type Project = { id: string; date: string; content: Content; context?: Pick<RequestSettings, "source_mode" | "reference_text" | "document_type"> & { branding?: BrandFields } };
+type Project = { id: string; date: string; content: Content; context?: Pick<RequestSettings, "source_mode" | "reference_text" | "document_type"> & { branding?: BrandFields; layout?: LayoutSettings; documentStyle?: "luxury" | "corporate" | "minimal" } };
 const STORAGE = "maghrabi-office-projects-v1";
 const documentTypeLabels: Record<DocumentType, string> = {
   general: "مستند عام",
@@ -134,6 +175,10 @@ export default function App() {
   const [presentationStyle, setPresentationStyle] = useState<"luxury" | "corporate" | "minimal">("luxury");
   const [documentStyle, setDocumentStyle] = useState<"luxury" | "corporate" | "minimal">("luxury");
   const [brand, setBrand] = useState<BrandFields>(emptyBrandFields);
+  const [layout, setLayout] = useState<LayoutSettings>(defaultLayout);
+  const [savedDesigns, setSavedDesigns] = useState<SavedDesign[]>(readDesigns);
+  const [newDesignName, setNewDesignName] = useState("");
+  const [selectedDesignId, setSelectedDesignId] = useState("");
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState("");
   const [projects, setProjects] = useState<Project[]>(readProjects);
@@ -334,7 +379,8 @@ export default function App() {
     await run("جارٍ تجهيز الملف…", async () => {
       validateContent(content);
       const hasCustomWord = format === "docx" &&
-        (logoFile !== null || Object.values(brand).some((value) => value.trim()));
+        (logoFile !== null || Object.values(brand).some((value) => value.trim()) ||
+         JSON.stringify(layout) !== JSON.stringify(defaultLayout));
       let response: Response;
       if (hasCustomWord && format === "docx") {
         const table_rows = brand.tableTSV.trim()
@@ -349,6 +395,14 @@ export default function App() {
           footer_text: brand.footerText.trim(),
           table_title: brand.tableTitle.trim(),
           table_rows,
+          logo_alignment: layout.logoAlignment,
+          logo_placement: layout.logoPlacement,
+          header_alignment: layout.headerAlignment,
+          footer_alignment: layout.footerAlignment,
+          page_orientation: layout.pageOrientation,
+          page_margins: layout.pageMargins,
+          body_font_size: layout.bodyFontSize,
+          show_page_numbers: layout.showPageNumbers,
         };
         const form = new FormData();
         form.append("content_json", JSON.stringify(content));
@@ -371,13 +425,64 @@ export default function App() {
       setNotice("تم تجهيز الملف وتنزيله. راجع تنسيقه النهائي في Office.");
     });
   }
+  function saveDesignTemplate() {
+    const name = newDesignName.trim();
+    if (!name || name.length > 60) {
+      setError("أدخل اسمًا للقالب من حرف إلى 60 حرفًا.");
+      return;
+    }
+    if (savedDesigns.length >= 12) {
+      setError("الحد الأقصى 12 قالبًا محفوظًا. احذف قالبًا قديمًا أولًا.");
+      return;
+    }
+    const item: SavedDesign = {
+      id: crypto.randomUUID(), name, documentStyle,
+      documentType: settings.document_type, brand: { ...brand }, layout: { ...layout },
+    };
+    try {
+      const next = [item, ...savedDesigns];
+      localStorage.setItem(DESIGN_STORAGE, JSON.stringify(next));
+      setSavedDesigns(next);
+      setSelectedDesignId("");
+      setNewDesignName("");
+      setError("");
+      setNotice("تم حفظ إعدادات تصميم Word على هذا المتصفح، دون ملف الشعار.");
+    } catch {
+      setError("تعذر حفظ القالب في المتصفح. تحقق من المساحة المتاحة.");
+    }
+  }
+  function applyDesignTemplate(id: string) {
+    const found = savedDesigns.find((item) => item.id === id);
+    if (!found) return;
+    setSelectedDesignId(id);
+    setDocumentStyle(found.documentStyle);
+    setSettings((value) => ({ ...value, document_type: found.documentType }));
+    setBrand({ ...emptyBrandFields, ...found.brand });
+    setLayout({ ...defaultLayout, ...found.layout });
+    setLogoFile(null);
+    setNotice("تم تطبيق القالب المحفوظ. أعد رفع الشعار إذا رغبت في استخدامه.");
+    setError("");
+  }
+  function deleteDesignTemplate() {
+    if (!selectedDesignId) return;
+    const next = savedDesigns.filter((item) => item.id !== selectedDesignId);
+    try {
+      localStorage.setItem(DESIGN_STORAGE, JSON.stringify(next));
+      setSavedDesigns(next);
+      setSelectedDesignId("");
+      setNotice("تم حذف القالب المحفوظ من هذا المتصفح.");
+      setError("");
+    } catch {
+      setError("تعذر حذف القالب من التخزين المحلي.");
+    }
+  }
   function saveProject() {
     if (!content) return;
     try {
       validateContent(content);
       if (projects.length >= 15) throw new Error("بلغت الحد الأقصى وهو 15 نسخة. احذف نسخة محفوظة قبل إضافة نسخة جديدة.");
       const next = [
-        { id: crypto.randomUUID(), date: new Date().toISOString(), content, context: {source_mode: settings.source_mode, reference_text: settings.reference_text, document_type: settings.document_type, branding: { ...brand }} },
+        { id: crypto.randomUUID(), date: new Date().toISOString(), content, context: {source_mode: settings.source_mode, reference_text: settings.reference_text, document_type: settings.document_type, branding: { ...brand }, layout: { ...layout }, documentStyle} },
         ...projects,
       ];
       localStorage.setItem(STORAGE, JSON.stringify(next));
@@ -1133,13 +1238,19 @@ export default function App() {
                             </div>
                           ) : (
                             <article
-                              className={`document-preview document-preview--${documentStyle} document-preview-kind--${settings.document_type}`}
+                              className={`document-preview document-preview--${documentStyle} document-preview-kind--${settings.document_type} document-preview--${layout.pageOrientation} document-preview-margins--${layout.pageMargins}`}
+                              style={{ fontSize: `${layout.bodyFontSize + 2}px` }}
                               dir={content.language === "ar" ? "rtl" : "ltr"}
                             >
                               <div className="document-preview-heading">
-                                {logoPreview && <img src={logoPreview} alt="الشعار المضاف للمستند" className="document-logo-preview" />}
                                 {brand.organizationName && <strong>{brand.organizationName}</strong>}
+                                {logoPreview && (settings.document_type === "letter" || layout.logoPlacement !== "header") && (
+                                  <div className={`document-preview-logo-slot align-${layout.logoAlignment}`}>
+                                    <img src={logoPreview} alt="الشعار المضاف للمستند" className="document-logo-preview" />
+                                  </div>
+                                )}
                               </div>
+                              {brand.headerText && <div className={`document-preview-line align-${layout.headerAlignment}`}>{brand.headerText}</div>}
                               <span className="document-kind-label">{documentTypeLabels[settings.document_type]}</span>
                               <h2>{content.title}</h2>
                               <p className="muted">{content.summary}</p>
@@ -1151,6 +1262,9 @@ export default function App() {
                                   ))}
                                 </div>
                               ))}
+                              <div className={`document-preview-footer align-${layout.footerAlignment}`}>
+                                {brand.footerText}{layout.showPageNumbers ? "  ·  صفحة 1" : ""}
+                              </div>
                             </article>
                           )}
                           <p className="small muted">
@@ -1310,6 +1424,100 @@ export default function App() {
                               بحد أقصى 6 أعمدة و30 صفًا. يبقى الجدول قابلًا للتحرير في Word.
                               لا يُحفظ ملف الشعار على الخادم ولا ضمن المشاريع المحلية.
                             </p>
+                          </div>
+                          <div className="presentation-style-control word-layout-editor">
+                            <h3 className="template-library-heading">محرّر تخطيط القالب</h3>
+                            <p className="muted small">حدّد محاذاة عناصر الهوية وتخطيط الصفحة. تُطبّق هذه الإعدادات على ملف Word النهائي.</p>
+                            <div className="two-fields">
+                              <label>
+                                موضع الشعار
+                                <select aria-label="موضع الشعار" value={layout.logoAlignment} onChange={(e) => setLayout({ ...layout, logoAlignment: e.target.value as LayoutSettings["logoAlignment"] })}>
+                                  <option value="start">بداية السطر</option>
+                                  <option value="center">وسط الصفحة</option>
+                                  <option value="end">نهاية السطر</option>
+                                </select>
+                              </label>
+                              <label>
+                                ظهور الشعار
+                                <select aria-label="ظهور الشعار" value={layout.logoPlacement} onChange={(e) => setLayout({ ...layout, logoPlacement: e.target.value as LayoutSettings["logoPlacement"] })}>
+                                  <option value="both">الغلاف والترويسة</option>
+                                  <option value="cover">الغلاف فقط</option>
+                                  <option value="header">الترويسة فقط</option>
+                                </select>
+                              </label>
+                            </div>
+                            <div className="two-fields">
+                              <label>
+                                محاذاة الترويسة
+                                <select aria-label="محاذاة الترويسة" value={layout.headerAlignment} onChange={(e) => setLayout({ ...layout, headerAlignment: e.target.value as LayoutSettings["headerAlignment"] })}>
+                                  <option value="start">بداية السطر</option>
+                                  <option value="center">وسط الصفحة</option>
+                                  <option value="end">نهاية السطر</option>
+                                </select>
+                              </label>
+                              <label>
+                                محاذاة التذييل
+                                <select aria-label="محاذاة التذييل" value={layout.footerAlignment} onChange={(e) => setLayout({ ...layout, footerAlignment: e.target.value as LayoutSettings["footerAlignment"] })}>
+                                  <option value="start">بداية السطر</option>
+                                  <option value="center">وسط الصفحة</option>
+                                  <option value="end">نهاية السطر</option>
+                                </select>
+                              </label>
+                            </div>
+                            <div className="two-fields">
+                              <label>
+                                اتجاه الصفحة
+                                <select aria-label="اتجاه الصفحة" value={layout.pageOrientation} onChange={(e) => setLayout({ ...layout, pageOrientation: e.target.value as LayoutSettings["pageOrientation"] })}>
+                                  <option value="portrait">عمودي A4</option>
+                                  <option value="landscape">أفقي A4</option>
+                                </select>
+                              </label>
+                              <label>
+                                هوامش الصفحة
+                                <select aria-label="هوامش الصفحة" value={layout.pageMargins} onChange={(e) => setLayout({ ...layout, pageMargins: e.target.value as LayoutSettings["pageMargins"] })}>
+                                  <option value="compact">ضيقة</option>
+                                  <option value="standard">متوسطة</option>
+                                  <option value="spacious">واسعة</option>
+                                </select>
+                              </label>
+                            </div>
+                            <div className="two-fields">
+                              <label>
+                                حجم الخط الأساسي
+                                <select aria-label="حجم الخط الأساسي" value={layout.bodyFontSize} onChange={(e) => setLayout({ ...layout, bodyFontSize: Number(e.target.value) as LayoutSettings["bodyFontSize"] })}>
+                                  {[10, 11, 12, 13].map((v) => <option key={v} value={v}>{v} نقطة</option>)}
+                                </select>
+                              </label>
+                              <label>
+                                ترقيم الصفحات
+                                <select aria-label="ترقيم الصفحات" value={layout.showPageNumbers ? "yes" : "no"} onChange={(e) => setLayout({ ...layout, showPageNumbers: e.target.value === "yes" })}>
+                                  <option value="yes">إظهار</option>
+                                  <option value="no">إخفاء</option>
+                                </select>
+                              </label>
+                            </div>
+                            {settings.document_type === "letter" && (
+                              <p className="muted small">في الخطابات يظهر الشعار في الترويسة دائمًا؛ لأنها لا تتضمن صفحة غلاف.</p>
+                            )}
+                            <div className="word-design-preset">
+                              <h3 className="template-library-heading">قوالبي المحفوظة</h3>
+                              <label>
+                                القوالب الشخصية
+                                <select aria-label="القوالب الشخصية" value={selectedDesignId} onChange={(e) => applyDesignTemplate(e.target.value)}>
+                                  <option value="">اختر قالبًا محفوظًا</option>
+                                  {savedDesigns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                                </select>
+                              </label>
+                              <label>
+                                اسم القالب الجديد
+                                <input maxLength={60} aria-label="اسم القالب الجديد" value={newDesignName} onChange={(e) => setNewDesignName(e.target.value)} placeholder="مثال: قالب التقرير الإداري" />
+                              </label>
+                              <div className="word-preset-actions">
+                                <button className="button outline" type="button" disabled={!!busy || !newDesignName.trim()} onClick={saveDesignTemplate}>حفظ تصميم القالب</button>
+                                <button className="button outline" type="button" disabled={!!busy || !selectedDesignId} onClick={deleteDesignTemplate}>حذف القالب المحدد</button>
+                              </div>
+                              <p className="muted small">تُحفظ إعدادات التصميم والنصوص محليًا على هذا المتصفح فقط (12 قالبًا كحد أقصى). لا تُحفظ صورة الشعار؛ أعد رفعها عند تطبيق القالب.</p>
+                            </div>
                           </div>
                           <div className="export-row">
                             <button
@@ -1517,6 +1725,8 @@ export default function App() {
                           setBrand(p.context?.branding && typeof p.context.branding === "object"
                             ? { ...emptyBrandFields, ...p.context.branding } : emptyBrandFields);
                           setLogoFile(null);
+                          setLayout(p.context?.layout ? { ...defaultLayout, ...p.context.layout } : defaultLayout);
+                          setDocumentStyle(p.context?.documentStyle && ["luxury", "corporate", "minimal"].includes(p.context.documentStyle) ? p.context.documentStyle : "luxury");
                           setPrevious(null);
                           setStage("edit");
                           setSelected(0);

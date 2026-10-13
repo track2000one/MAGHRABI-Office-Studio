@@ -222,6 +222,61 @@ describe("Office Studio workflows", () => {
     expect(uploadedLogo.size).toBe(logo.size);
   });
 
+  it("applies Word page layout options to real DOCX export even without branding fields", async () => {
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:word-layout");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await user.selectOptions(screen.getByLabelText("اتجاه الصفحة"), "landscape");
+    await user.selectOptions(screen.getByLabelText("هوامش الصفحة"), "compact");
+    await user.selectOptions(screen.getByLabelText("موضع الشعار"), "center");
+    await user.selectOptions(screen.getByLabelText("محاذاة الترويسة"), "center");
+    await user.selectOptions(screen.getByLabelText("محاذاة التذييل"), "end");
+    await user.selectOptions(screen.getByLabelText("حجم الخط الأساسي"), "13");
+    await user.selectOptions(screen.getByLabelText("ترقيم الصفحات"), "no");
+    await user.click(screen.getByRole("button", { name: "معاينة Word" }));
+    expect(document.querySelector(".document-preview--landscape")).toBeTruthy();
+    expect(document.querySelector(".document-preview-margins--compact")).toBeTruthy();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("new-word-file", { status: 200 }));
+    await user.click(screen.getByRole("button", { name: "تنزيل Word" }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+      String(url).includes("/exports/docx/custom?"))).toBe(true));
+    const request = vi.mocked(fetch).mock.calls.find(([url]) =>
+      String(url).includes("/exports/docx/custom?"))!;
+    expect(JSON.parse((request[1]!.body as FormData).get("customization_json") as string))
+      .toMatchObject({
+        page_orientation: "landscape",
+        page_margins: "compact",
+        logo_alignment: "center",
+        header_alignment: "center",
+        footer_alignment: "end",
+        body_font_size: 13,
+        show_page_numbers: false,
+      });
+  });
+
+  it("saves a named Word design and reapplies then deletes it without persisting logos", async () => {
+    const user = await openExample();
+    await user.selectOptions(screen.getByLabelText("اتجاه الصفحة"), "landscape");
+    await user.selectOptions(screen.getByLabelText("موضع الشعار"), "end");
+    await user.selectOptions(screen.getByLabelText("طابع تصميم Word"), "minimal");
+    await user.type(screen.getByLabelText("اسم القالب الجديد"), "قالب التقرير المميز");
+    await user.click(screen.getByRole("button", { name: "حفظ تصميم القالب" }));
+    const stored = JSON.parse(localStorage.getItem("maghrabi-office-word-designs-v1") || "[]");
+    expect(stored).toHaveLength(1);
+    expect(stored[0].name).toBe("قالب التقرير المميز");
+    expect(stored[0].layout.pageOrientation).toBe("landscape");
+    expect(JSON.stringify(stored)).not.toContain("logoFile");
+    await user.selectOptions(screen.getByLabelText("اتجاه الصفحة"), "portrait");
+    await user.selectOptions(screen.getByLabelText("موضع الشعار"), "start");
+    await user.selectOptions(screen.getByLabelText("القوالب الشخصية"), stored[0].id);
+    expect(screen.getByLabelText("اتجاه الصفحة")).toHaveValue("landscape");
+    expect(screen.getByLabelText("موضع الشعار")).toHaveValue("end");
+    expect(screen.getByLabelText("طابع تصميم Word")).toHaveValue("minimal");
+    await user.click(screen.getByRole("button", { name: "حذف القالب المحدد" }));
+    expect(JSON.parse(localStorage.getItem("maghrabi-office-word-designs-v1") || "[]")).toHaveLength(0);
+  });
+
   it("uploads the actual file to analysis and renders returned metrics", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);

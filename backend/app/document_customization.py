@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from io import BytesIO
-from typing import Annotated
+from typing import Annotated, Literal
 
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -13,6 +13,14 @@ class WordCustomization(BaseModel):
     organization_name: str = Field(default="", max_length=150)
     header_text: str = Field(default="", max_length=160)
     footer_text: str = Field(default="", max_length=160)
+    logo_alignment: Literal["start", "center", "end"] = "start"
+    logo_placement: Literal["both", "cover", "header"] = "both"
+    header_alignment: Literal["start", "center", "end"] = "start"
+    footer_alignment: Literal["start", "center", "end"] = "start"
+    page_orientation: Literal["portrait", "landscape"] = "portrait"
+    page_margins: Literal["compact", "standard", "spacious"] = "standard"
+    body_font_size: Literal[10, 11, 12, 13] = 11
+    show_page_numbers: bool = True
     table_title: str = Field(default="", max_length=160)
     table_rows: list[list[Annotated[str, Field(max_length=240)]]] = Field(
         default_factory=list, max_length=31
