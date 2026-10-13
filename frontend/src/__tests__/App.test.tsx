@@ -174,6 +174,52 @@ describe("Office Studio workflows", () => {
     expect(request.format).toBe("docx");
   });
 
+  it("exports branded user data and a real supplied editable table via multipart Word endpoint", async () => {
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:custom-docx");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await user.click(screen.getByRole("button", { name: "تقرير رسمي" }));
+    expect(screen.getByRole("button", { name: "تقرير رسمي" })).toHaveAttribute("aria-pressed", "true");
+    await user.type(screen.getByLabelText("اسم الجهة (اختياري)"), "إدارة الاختبار");
+    await user.type(screen.getByLabelText("نص الترويسة (اختياري)"), "ترويسة اختبار");
+    fireEvent.change(screen.getByLabelText("بيانات جدول من Excel (اختياري)"), {
+      target: { value: "العنصر\tالمسؤول\nمراجعة\tالفريق" },
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("branded-docx", { status: 200 }));
+    await user.click(screen.getByRole("button", { name: "تنزيل Word" }));
+    const call = vi.mocked(fetch).mock.calls.find(([url]) =>
+      String(url).includes("/exports/docx/custom?design_style=luxury&document_type=report"))!;
+    await waitFor(() => expect(call).toBeDefined());
+    const form = call[1]!.body as FormData;
+    expect(JSON.parse(form.get("content_json") as string).title).toBe(example.title);
+    expect(JSON.parse(form.get("customization_json") as string)).toMatchObject({
+      organization_name: "إدارة الاختبار",
+      header_text: "ترويسة اختبار",
+      table_rows: [["العنصر", "المسؤول"], ["مراجعة", "الفريق"]],
+    });
+    expect(form.get("logo")).toBeNull();
+  });
+
+  it("sends selected logo only with document export and never stores its bytes in projects", async () => {
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:brand-preview");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const logo = new File(["png-demo"], "agency.png", { type: "image/png" });
+    await user.upload(screen.getByLabelText("شعار الجهة (PNG أو JPG)"), logo);
+    await user.click(screen.getByRole("button", { name: "معاينة Word" }));
+    expect(await screen.findByAltText("الشعار المضاف للمستند")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "حفظ نسخة" }));
+    expect(localStorage.getItem("maghrabi-office-projects-v1")).not.toContain("png-demo");
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("logo-docx", { status: 200 }));
+    await user.click(screen.getByRole("button", { name: "تنزيل Word" }));
+    const call = vi.mocked(fetch).mock.calls.find(([url]) =>
+      String(url).includes("/exports/docx/custom?"))!;
+    await waitFor(() => expect(call).toBeDefined());
+    expect((call[1]!.body as FormData).get("logo")).toBe(logo);
+  });
+
   it("uploads the actual file to analysis and renders returned metrics", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
