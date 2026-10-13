@@ -31,9 +31,13 @@ def test_pptx_export_keeps_text_and_speaker_notes():
     response = client.post('/api/v1/exports/pptx', json=CONTENT)
     assert response.status_code == 200
     deck = Presentation(BytesIO(response.content))
-    assert len(deck.slides) == 3  # cover plus the two supplied sections
+    assert len(deck.slides) >= 4  # premium cover, agenda and the two supplied sections
     assert any(CONTENT['title'] in s.text for s in deck.slides[0].shapes if s.has_text_frame)
-    assert 'توضيح الهدف.' in deck.slides[1].notes_slide.notes_text_frame.text
+    assert any('محاور العرض' in s.text for s in deck.slides[1].shapes if s.has_text_frame)
+    assert any(
+        'توضيح الهدف.' in slide.notes_slide.notes_text_frame.text
+        for slide in deck.slides if slide.has_notes_slide
+    )
 
 
 def test_pptx_long_content_is_split_without_losing_text():
