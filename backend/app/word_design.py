@@ -18,6 +18,14 @@ from docx.shared import Inches, Pt, RGBColor
 from .content import Content
 
 STYLE_NAMES = ("luxury", "corporate", "minimal")
+DOCUMENT_TYPES = ("general", "report", "study", "strategy", "letter")
+DOCUMENT_LABELS = {
+    "general": ("مستند احترافي", "PROFESSIONAL DOCUMENT"),
+    "report": ("تقرير رسمي", "OFFICIAL REPORT"),
+    "study": ("دراسة تفصيلية", "DETAILED STUDY"),
+    "strategy": ("خطة استراتيجية", "STRATEGIC PLAN"),
+    "letter": ("خطاب إداري", "OFFICIAL LETTER"),
+}
 
 
 @dataclass(frozen=True)
@@ -197,7 +205,7 @@ def _setup_styles(doc, theme: Theme, rtl: bool):
         _set_font(doc.styles[label], theme, 13, theme.muted)
 
 
-def _cover(doc, content: Content, theme: Theme, rtl: bool):
+def _cover(doc, content: Content, theme: Theme, rtl: bool, document_type: str = "general"):
     lead = doc.add_paragraph()
     lead.paragraph_format.space_before = Pt(18)
     lead.paragraph_format.space_after = Pt(14)
@@ -214,7 +222,7 @@ def _cover(doc, content: Content, theme: Theme, rtl: bool):
 
     label = doc.add_paragraph()
     label.paragraph_format.space_after = Pt(16)
-    small = label.add_run("مستند احترافي" if rtl else "PROFESSIONAL DOCUMENT")
+    small = label.add_run(DOCUMENT_LABELS[document_type][0 if rtl else 1])
     small.bold = True
     small.font.size = Pt(11)
     small.font.color.rgb = _color(theme.accent)
@@ -286,10 +294,14 @@ def _contents(doc, content: Content, theme: Theme, rtl: bool):
     _add_page_break(doc)
 
 
-def _summary(doc, content: Content, theme: Theme, rtl: bool):
+def _summary(doc, content: Content, theme: Theme, rtl: bool, document_type: str = "general"):
     if not content.summary:
         return
-    p = doc.add_heading("الملخص التنفيذي" if rtl else "EXECUTIVE SUMMARY", 1)
+    summary_heading = ("ملخص الدراسة" if rtl else "STUDY SUMMARY") if document_type == "study" else (
+        ("ملخص الخطة" if rtl else "PLAN SUMMARY") if document_type == "strategy" else
+        ("الملخص التنفيذي" if rtl else "EXECUTIVE SUMMARY")
+    )
+    p = doc.add_heading(summary_heading, 1)
     _paragraph_direction(p, rtl)
     _rule(p, theme.accent)
 
@@ -357,9 +369,99 @@ def _sections(doc, content: Content, theme: Theme, rtl: bool):
             _paragraph_direction(paragraph, rtl)
 
 
-def export_premium_docx(content: Content, design_style: str = "luxury") -> bytes:
+def _template_overview(doc, content: Content, theme: Theme, rtl: bool, document_type: str):
+    """Visual index of user-supplied headings only; does not fabricate project data."""
+    if document_type not in ("study", "strategy"):
+        return
+    heading = {
+        "study": ("خارطة محاور الدراسة", "STUDY ROADMAP"),
+        "strategy": ("محاور الخطة الاستراتيجية", "STRATEGIC PILLARS"),
+    }[document_type][0 if rtl else 1]
+    p = doc.add_heading(heading, 1)
+    _paragraph_direction(p, rtl)
+    _rule(p, theme.accent, size=11)
+    table = doc.add_table(rows=0, cols=2)
+    table.autofit = False
+    table.columns[0].width = Inches(.72)
+    table.columns[1].width = Inches(5.70)
+    for i, item in enumerate(content.sections, 1):
+        cells = table.add_row().cells
+        cells[0].text = f"{i:02d}"
+        cells[1].text = item.title
+        for j, cell in enumerate(cells):
+            _set_cell_margins(cell, top=110, bottom=110, start=160, end=160)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            if i % 2:
+                _shade_cell(cell, theme.pale)
+            for paragraph in cell.paragraphs:
+                paragraph.paragraph_format.space_after = Pt(0)
+                _paragraph_direction(paragraph, rtl)
+                for run in paragraph.runs:
+                    run.font.size = Pt(10)
+                    run.font.color.rgb = _color(theme.accent if j == 0 else theme.dark)
+    spacer = doc.add_paragraph()
+    spacer.paragraph_format.space_after = Pt(4)
+
+
+def _formal_letter(doc, content: Content, theme: Theme, rtl: bool):
+    """Compact correspondence layout; never invent recipient, date or signature."""
+    section = doc.sections[0]
+    # Letterhead is deliberately unbranded; no fictitious government letterhead.
+    section.top_margin = Inches(.92)
+    section.bottom_margin = Inches(.86)
+    section.different_first_page_header_footer = False
+    header = section.header.paragraphs[0]
+    _rule(header, theme.accent, size=14)
+    _paragraph_direction(header, rtl)
+
+    title = doc.add_paragraph()
+    title.paragraph_format.space_before = Pt(12)
+    title.paragraph_format.space_after = Pt(20)
+    title.paragraph_format.keep_with_next = True
+    subject = title.add_run(
+        ("الموضوع: " if rtl else "Subject: ") + content.title
+    )
+    subject.bold = True
+    subject.font.size = Pt(15)
+    subject.font.color.rgb = _color(theme.dark)
+    _paragraph_direction(title, rtl)
+    _rule(title, theme.rule, size=7)
+    if content.summary:
+        opening = doc.add_paragraph(content.summary)
+        opening.paragraph_format.space_after = Pt(17)
+        _paragraph_direction(opening, rtl)
+
+    for item in content.sections:
+        lead = doc.add_paragraph()
+        lead.paragraph_format.space_before = Pt(9)
+        lead.paragraph_format.space_after = Pt(6)
+        lead.paragraph_format.keep_with_next = True
+        run = lead.add_run(item.title)
+        run.bold = True
+        run.font.size = Pt(11)
+        run.font.color.rgb = _color(theme.secondary)
+        _paragraph_direction(lead, rtl)
+        for body in item.body:
+            paragraph = doc.add_paragraph(body)
+            paragraph.paragraph_format.space_after = Pt(10)
+            paragraph.paragraph_format.line_spacing = 1.52
+            _paragraph_direction(paragraph, rtl)
+
+    # A small footer uses neutral document page numbering, not an official seal.
+    footer = section.footer.paragraphs[0]
+    _paragraph_direction(footer, rtl)
+    num = footer.add_run(("صفحة " if rtl else "Page "))
+    num.font.size = Pt(8)
+    num.font.color.rgb = _color(theme.muted)
+    _field(footer, "PAGE")
+
+
+def export_premium_docx(content: Content, design_style: str = "luxury",
+                        document_type: str = "general") -> bytes:
     if design_style not in STYLE_NAMES:
         raise ValueError("Unsupported Word design style")
+    if document_type not in DOCUMENT_TYPES:
+        raise ValueError("Unsupported Word document type")
     theme = THEMES[design_style]
     rtl = content.language == "ar"
     doc = Document()
@@ -372,17 +474,20 @@ def export_premium_docx(content: Content, design_style: str = "luxury") -> bytes
     section.right_margin = Inches(.90)
     section.header_distance = Inches(.38)
     section.footer_distance = Inches(.40)
-    section.different_first_page_header_footer = True
 
     _setup_styles(doc, theme, rtl)
-    _configure_header_footer(doc, theme, rtl)
-    _cover(doc, content, theme, rtl)
-    _contents(doc, content, theme, rtl)
-    _summary(doc, content, theme, rtl)
-    _sections(doc, content, theme, rtl)
+    if document_type == "letter":
+        _formal_letter(doc, content, theme, rtl)
+    else:
+        _configure_header_footer(doc, theme, rtl)
+        _cover(doc, content, theme, rtl, document_type)
+        _contents(doc, content, theme, rtl)
+        _summary(doc, content, theme, rtl, document_type)
+        _template_overview(doc, content, theme, rtl, document_type)
+        _sections(doc, content, theme, rtl)
 
     doc.core_properties.title = content.title
-    doc.core_properties.subject = "Editable Office Studio document"
+    doc.core_properties.subject = DOCUMENT_LABELS[document_type][0 if rtl else 1]
     output = BytesIO()
     doc.save(output)
     return output.getvalue()
