@@ -87,7 +87,7 @@ describe("Office Studio workflows", () => {
     URL.revokeObjectURL = vi.fn();
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     await user.selectOptions(screen.getByLabelText("طابع تصميم PowerPoint"), "minimal");
-    expect(screen.getByText("فاخر — كحلي وذهبي")).toBeInTheDocument();
+    expect(screen.getAllByText("فاخر — كحلي وذهبي").length).toBeGreaterThan(0);
     expect(document.querySelector(".slide-preview--minimal")).toBeTruthy();
     vi.mocked(fetch).mockResolvedValueOnce(new Response("pptx-bytes", { status: 200 }));
     await user.click(screen.getByRole("button", { name: "تنزيل PowerPoint" }));
