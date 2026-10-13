@@ -160,13 +160,13 @@ describe("Office Studio workflows", () => {
       expect(records[0].context.layout.pageOrientation).toBe("landscape");
     });
     const id = JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!)[0].id;
-    await user.click(screen.getByRole("button", {name: /مشاريعي/}));
+    await user.click(screen.getByRole("button", {name: "مشاريعي"}));
     expect(screen.getByText("دراسة تفصيلية للمتابعة")).toBeVisible();
     expect(screen.getByText("1 مشروع محفوظ")).toBeVisible();
     cleanup();
     const fresh = userEvent.setup();
     render(<App />);
-    await fresh.click(screen.getByRole("button", {name: /مشاريعي/}));
+    await fresh.click(screen.getByRole("button", {name: "مشاريعي"}));
     expect(screen.getByText("دراسة تفصيلية للمتابعة")).toBeVisible();
     await fresh.click(screen.getByRole("button", {name: "فتح وتحرير"}));
     expect(screen.getByLabelText("عنوان المستند")).toHaveValue("دراسة تفصيلية للمتابعة");
@@ -188,7 +188,7 @@ describe("Office Studio workflows", () => {
     await user.click(screen.getByRole("button", {name: "اكتب المحتوى بنفسك"}));
     await user.type(screen.getByLabelText("عنوان المستند"), "دراسة أولية");
     await waitFor(() => expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1") || "[]")).toHaveLength(1));
-    await user.click(screen.getByRole("button", {name: /مشاريعي/}));
+    await user.click(screen.getByRole("button", {name: "مشاريعي"}));
     expect(screen.getByText("دراسة أولية")).toBeVisible();
     await user.click(screen.getByRole("button", {name: "فتح وتحرير"}));
     expect(screen.getByLabelText("عنوان المستند")).toHaveValue("دراسة أولية");
@@ -213,7 +213,7 @@ describe("Office Studio workflows", () => {
     URL.createObjectURL = makeUrl;
     URL.revokeObjectURL = vi.fn();
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    await user.click(screen.getByRole("button", {name: /مشاريعي/}));
+    await user.click(screen.getByRole("button", {name: "مشاريعي"}));
     await user.type(screen.getByLabelText("البحث في مشاريعي"), "لا يوجد مثل هذا العنوان");
     expect(screen.queryByText(example.title)).not.toBeInTheDocument();
     await user.clear(screen.getByLabelText("البحث في مشاريعي"));
@@ -287,7 +287,7 @@ describe("Office Studio workflows", () => {
     const user = await openExample();
     await user.selectOptions(screen.getByLabelText("نوع مستند Word"), "study");
     await user.click(screen.getByRole("button", { name: "حفظ المشروع الآن" }));
-    await user.click(screen.getByRole("button", { name: /مشاريعي/ }));
+    await user.click(screen.getByRole("button", { name: "مشاريعي" }));
     await user.click(screen.getByRole("button", { name: "فتح وتحرير" }));
     expect(screen.getByLabelText("نوع مستند Word")).toHaveValue("study");
   });
