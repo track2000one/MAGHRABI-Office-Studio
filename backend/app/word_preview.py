@@ -61,7 +61,7 @@ def _render_word_preview(docx_data: bytes) -> Response:
                 capture_output=True,
                 timeout=PREVIEW_TIMEOUT_SECONDS,
                 check=False,
-                env={**os.environ, "HOME": str(folder), "SAL_USE_VCLPLUGIN": "gen"},
+                env={**os.environ, "HOME": str(folder), "SAL_USE_VCLPLUGIN": "svp"},
             )
             if result.returncode != 0 or not output_path.is_file():
                 raise HTTPException(
