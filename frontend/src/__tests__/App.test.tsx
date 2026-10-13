@@ -57,12 +57,12 @@ describe("Office Studio workflows", () => {
     );
   });
 
-  it("keeps edits when exporting and saves only on explicit save", async () => {
+  it("autosaves edits with one persistent project ID and preserves editable exports", async () => {
     const user = await openExample();
-    expect(localStorage.getItem("maghrabi-office-projects-v1")).toBeNull();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1") || "[]")).toHaveLength(1));
     await user.clear(screen.getByLabelText("عنوان المستند"));
     await user.type(screen.getByLabelText("عنوان المستند"), "عنوان محدث");
-    await user.click(screen.getByRole("button", { name: "حفظ نسخة" }));
+    await user.click(screen.getByRole("button", { name: "حفظ المشروع الآن" }));
     expect(
       JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!)[0]
         .content.title,
@@ -145,6 +145,111 @@ describe("Office Studio workflows", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("محرّك معاينة الصفحات غير متاح");
   });
 
+  it("automatically displays a project in My Projects and restores it after reloading", async () => {
+    const user = await openExample();
+    await user.clear(screen.getByLabelText("عنوان المستند"));
+    await user.type(screen.getByLabelText("عنوان المستند"), "دراسة تفصيلية للمتابعة");
+    await user.selectOptions(screen.getByLabelText("نوع مستند Word"), "study");
+    await user.selectOptions(screen.getByLabelText("اتجاه الصفحة"), "landscape");
+    await user.type(screen.getByLabelText("اسم الجهة (اختياري)"), "جهة الاختبار");
+    await waitFor(() => {
+      const records = JSON.parse(localStorage.getItem("maghrabi-office-projects-v1") || "[]");
+      expect(records).toHaveLength(1);
+      expect(records[0].content.title).toBe("دراسة تفصيلية للمتابعة");
+      expect(records[0].context.document_type).toBe("study");
+      expect(records[0].context.layout.pageOrientation).toBe("landscape");
+    });
+    const id = JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!)[0].id;
+    await user.click(screen.getByRole("button", {name: "مشاريعي"}));
+    expect(screen.getByText("دراسة تفصيلية للمتابعة")).toBeVisible();
+    expect(screen.getByText("1 مشروع محفوظ")).toBeVisible();
+    cleanup();
+    const fresh = userEvent.setup();
+    render(<App />);
+    await fresh.click(screen.getByRole("button", {name: "مشاريعي"}));
+    expect(screen.getByText("دراسة تفصيلية للمتابعة")).toBeVisible();
+    await fresh.click(screen.getByRole("button", {name: "فتح وتحرير"}));
+    expect(screen.getByLabelText("عنوان المستند")).toHaveValue("دراسة تفصيلية للمتابعة");
+    expect(screen.getByLabelText("نوع مستند Word")).toHaveValue("study");
+    expect(screen.getByLabelText("اتجاه الصفحة")).toHaveValue("landscape");
+    await fresh.type(screen.getByLabelText("وصف مختصر"), " إضافة جديدة");
+    await waitFor(() => {
+      const next = JSON.parse(localStorage.getItem("maghrabi-office-projects-v1") || "[]");
+      expect(next).toHaveLength(1);
+      expect(next[0].id).toBe(id);
+      expect(next[0].content.summary).toContain("إضافة جديدة");
+    });
+  });
+
+  it("keeps incomplete Word drafts so work can continue from My Projects", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", {name: /إنشاء بالذكاء الاصطناعي/}));
+    await user.click(screen.getByRole("button", {name: "اكتب المحتوى بنفسك"}));
+    await user.type(screen.getByLabelText("عنوان المستند"), "دراسة أولية");
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1") || "[]")).toHaveLength(1));
+    await user.click(screen.getByRole("button", {name: "مشاريعي"}));
+    expect(screen.getByText("دراسة أولية")).toBeVisible();
+    await user.click(screen.getByRole("button", {name: "فتح وتحرير"}));
+    expect(screen.getByLabelText("عنوان المستند")).toHaveValue("دراسة أولية");
+    expect(screen.getByLabelText("النص — فقرة في كل سطر")).toHaveValue("");
+  });
+
+  it("stores separate projects only when Save independent copy is requested", async () => {
+    const user = await openExample();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1") || "[]")).toHaveLength(1));
+    await user.click(screen.getByRole("button", {name: "حفظ المشروع الآن"}));
+    expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!)).toHaveLength(1);
+    await user.click(screen.getByRole("button", {name: "حفظ نسخة مستقلة"}));
+    const records = JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!);
+    expect(records).toHaveLength(2);
+    expect(records[0].id).not.toBe(records[1].id);
+  });
+
+  it("allows searching, filtering and exporting a portable backup of saved projects", async () => {
+    const user = await openExample();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1") || "[]")).toHaveLength(1));
+    const makeUrl = vi.fn(() => "blob:backup-json");
+    URL.createObjectURL = makeUrl;
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await user.click(screen.getByRole("button", {name: "مشاريعي"}));
+    await user.type(screen.getByLabelText("البحث في مشاريعي"), "لا يوجد مثل هذا العنوان");
+    expect(screen.queryByText(example.title)).not.toBeInTheDocument();
+    await user.clear(screen.getByLabelText("البحث في مشاريعي"));
+    expect(screen.getByText(example.title)).toBeVisible();
+    await user.selectOptions(screen.getByLabelText("نوع المشروع"), "docx");
+    expect(screen.queryByText(example.title)).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("نوع المشروع"), "all");
+    await user.click(screen.getByRole("button", {name: "تصدير نسخة احتياطية"}));
+    expect(makeUrl).toHaveBeenCalled();
+  });
+
+  it("imports a validated project backup into My Projects without erasing existing records", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", {name: "مشاريعي"}));
+    const sample = {
+      id: "portable-project", date: "2026-10-13T00:00:00.000Z",
+      updatedAt: "2026-10-13T02:00:00.000Z",
+      content: {...example, title: "مشروع مستورد للتجربة"},
+      format: "docx", stage: "edit",
+      context: {source_mode: "general", reference_text: "", document_type: "study"},
+    };
+    const json = JSON.stringify({
+      kind: "maghrabi-office-project-backup", version: 1,
+      projects: [sample],
+    });
+    const backup = new File([json], "study-backup.json", {type: "application/json"});
+    Object.defineProperty(backup, "text", {value: () => Promise.resolve(json)});
+    await user.upload(screen.getByLabelText("ملف النسخة الاحتياطية"), backup);
+    expect(await screen.findByText("مشروع مستورد للتجربة")).toBeVisible();
+    expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!)[0].id)
+      .toBe("portable-project");
+    await user.click(screen.getByRole("button", {name: "فتح وتحرير"}));
+    expect(screen.getByLabelText("نوع مستند Word")).toHaveValue("study");
+  });
+
   it("exports chosen premium PowerPoint theme without affecting Word export", async () => {
     const user = await openExample();
     URL.createObjectURL = vi.fn(() => "blob:pptx");
@@ -206,8 +311,8 @@ describe("Office Studio workflows", () => {
   it("restores document type when reopening a saved local project", async () => {
     const user = await openExample();
     await user.selectOptions(screen.getByLabelText("نوع مستند Word"), "study");
-    await user.click(screen.getByRole("button", { name: "حفظ نسخة" }));
-    await user.click(screen.getByRole("button", { name: /مشاريعي/ }));
+    await user.click(screen.getByRole("button", { name: "حفظ المشروع الآن" }));
+    await user.click(screen.getByRole("button", { name: "مشاريعي" }));
     await user.click(screen.getByRole("button", { name: "فتح وتحرير" }));
     expect(screen.getByLabelText("نوع مستند Word")).toHaveValue("study");
   });
@@ -274,7 +379,7 @@ describe("Office Studio workflows", () => {
     await user.upload(screen.getByLabelText("شعار الجهة (PNG أو JPG)"), logo);
     await user.click(screen.getByRole("button", { name: "معاينة Word" }));
     expect(await screen.findByAltText("الشعار المضاف للمستند")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "حفظ نسخة" }));
+    await user.click(screen.getByRole("button", { name: "حفظ المشروع الآن" }));
     expect(localStorage.getItem("maghrabi-office-projects-v1")).not.toContain("png-demo");
     vi.mocked(fetch).mockResolvedValueOnce(new Response("logo-docx", { status: 200 }));
     await user.click(screen.getByRole("button", { name: "تنزيل Word" }));
@@ -427,12 +532,14 @@ it("returns from topic settings without losing unsaved content", async () => {
   expect(screen.getByLabelText("عنوان المستند")).toHaveValue("مسودة محفوظة في المحرر");
 });
 it("never evicts saved projects when the capacity is reached", async () => {
-  const saved = Array.from({length: 15}, (_, i) => ({id: String(i), date: new Date().toISOString(), content: example}));
+  const saved = Array.from({length: 50}, (_, i) => ({id: String(i), date: new Date().toISOString(), content: example}));
   localStorage.setItem("maghrabi-office-projects-v1", JSON.stringify(saved));
   const user = await openExample();
-  await user.click(screen.getByRole("button", {name: "حفظ نسخة"}));
+  await user.click(screen.getByRole("button", {name: "حفظ المشروع الآن"}));
   expect(await screen.findByRole("alert")).toHaveTextContent("بلغت الحد الأقصى");
-  expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!)).toEqual(saved);
+  expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!)).toHaveLength(50);
+  expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!).map((p: {id: string}) => p.id).sort())
+    .toEqual(saved.map(p => p.id).sort());
 });
 
 

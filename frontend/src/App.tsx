@@ -62,8 +62,22 @@ type BrandFields = {
 const emptyBrandFields: BrandFields = {
   organizationName: "", headerText: "", footerText: "", tableTitle: "", tableTSV: "",
 };
-type Project = { id: string; date: string; content: Content; context?: Pick<RequestSettings, "source_mode" | "reference_text" | "document_type"> & { branding?: BrandFields; layout?: LayoutSettings; documentStyle?: "luxury" | "corporate" | "minimal" } };
+type Project = {
+  id: string;
+  date: string;
+  updatedAt?: string;
+  content: Content;
+  format?: Format;
+  stage?: "outline" | "edit";
+  context?: Pick<RequestSettings, "source_mode" | "reference_text" | "document_type"> & {
+    branding?: BrandFields;
+    layout?: LayoutSettings;
+    documentStyle?: "luxury" | "corporate" | "minimal";
+    presentationStyle?: "luxury" | "corporate" | "minimal";
+  };
+};
 const STORAGE = "maghrabi-office-projects-v1";
+const PROJECT_LIMIT = 50;
 const documentTypeLabels: Record<DocumentType, string> = {
   general: "مستند عام",
   report: "تقرير رسمي",
@@ -117,7 +131,8 @@ function readProjects(): Project[] {
               typeof p?.date === "string" &&
               isContent(p.content),
           )
-          .slice(0, 15)
+          .sort((a: Project, b: Project) =>
+            (b.updatedAt || b.date).localeCompare(a.updatedAt || a.date))
       : [];
   } catch {
     return [];
@@ -183,10 +198,15 @@ export default function App() {
   const [logoPreview, setLogoPreview] = useState("");
   const [wordPagePreview, setWordPagePreview] = useState<{url: string; fingerprint: string; pages: number} | null>(null);
   const [projects, setProjects] = useState<Project[]>(readProjects);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [projectQuery, setProjectQuery] = useState("");
+  const [projectFormat, setProjectFormat] = useState<"all" | Format>("all");
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const projectBackupInput = useRef<HTMLInputElement>(null);
 
   async function checkStatus() {
     setStatus("loading");
@@ -267,11 +287,17 @@ export default function App() {
     }
   }
   function start(format: Format) {
-    setSettings((s) => ({ ...s, format }));
+    setActiveProjectId(null);
+    setContent(null);
+    setPrevious(null);
+    setStage("topic");
+    setSettings((s) => ({ ...s, format, topic: "", reference_text: "" }));
     setView(format);
+    setSaveStatus("idle");
     setPage("create");
   }
   function manual() {
+    setActiveProjectId(crypto.randomUUID());
     setContent({
       title: settings.topic,
       summary: "",
@@ -322,6 +348,7 @@ export default function App() {
           )
         ).json();
         setPrevious(content);
+        if (!activeProjectId) setActiveProjectId(crypto.randomUUID());
         setContent(data);
         setStage(phase === "outline" ? "outline" : "edit");
         setSelected(0);
@@ -511,23 +538,136 @@ export default function App() {
       setError("تعذر حذف القالب من التخزين المحلي.");
     }
   }
-  function saveProject() {
-    if (!content) return;
+  function persistProject(silent: boolean, forceNew = false): boolean {
+    if (!content) return false;
+    const id = forceNew || !activeProjectId ? crypto.randomUUID() : activeProjectId;
     try {
-      validateContent(content);
-      if (projects.length >= 15) throw new Error("بلغت الحد الأقصى وهو 15 نسخة. احذف نسخة محفوظة قبل إضافة نسخة جديدة.");
-      const next = [
-        { id: crypto.randomUUID(), date: new Date().toISOString(), content, context: {source_mode: settings.source_mode, reference_text: settings.reference_text, document_type: settings.document_type, branding: { ...brand }, layout: { ...layout }, documentStyle} },
-        ...projects,
-      ];
+      const current = readProjects();
+      const existing = current.find((p) => p.id === id);
+      if (!existing && current.length >= PROJECT_LIMIT)
+        throw new Error("بلغت الحد الأقصى وهو 50 مشروعًا. احذف مشروعًا أو صدّر نسخة احتياطية قبل إضافة مشروع جديد.");
+      const now = new Date().toISOString();
+      const updated: Project = {
+        id,
+        date: existing?.date || now,
+        updatedAt: now,
+        content: structuredClone(content),
+        format: settings.format,
+        stage: stage === "outline" ? "outline" : "edit",
+        context: {
+          source_mode: settings.source_mode,
+          reference_text: settings.reference_text,
+          document_type: settings.document_type,
+          branding: {...brand},
+          layout: {...layout},
+          documentStyle,
+          presentationStyle,
+        },
+      };
+      const next = [updated, ...current.filter((p) => p.id !== id)]
+        .sort((a, b) => (b.updatedAt || b.date).localeCompare(a.updatedAt || a.date));
       localStorage.setItem(STORAGE, JSON.stringify(next));
       setProjects(next);
-      setNotice("تم حفظ نسخة على هذا المتصفح.");
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "تعذر الحفظ على المتصفح.");
+      if (activeProjectId !== id) setActiveProjectId(id);
+      setSaveStatus("saved");
+      if (!silent) {
+        setNotice(forceNew ? "تم حفظ نسخة مستقلة في مشاريعي." : "تم حفظ المشروع في صفحة مشاريعي.");
+        setError("");
+      }
+      return true;
+    } catch (err) {
+      setSaveStatus("error");
+      setError(err instanceof Error ? err.message : "تعذر حفظ المشروع في هذا المتصفح.");
+      return false;
     }
   }
+
+  function saveProject() {
+    if (!content) return;
+    persistProject(false);
+  }
+
+  // Automatic drafts include incomplete sections; validation is reserved for exports.
+  // Every revision updates its original project ID rather than creating duplicates.
+  useEffect(() => {
+    if (!content || !activeProjectId || (stage !== "edit" && stage !== "outline")) return;
+    setSaveStatus("saving");
+    const handle = window.setTimeout(() => persistProject(true), 450);
+    return () => window.clearTimeout(handle);
+  }, [activeProjectId, content, stage, settings, brand, layout, documentStyle, presentationStyle]);
+
+  // Flush the newest draft when a tab is hidden or closed between debounce cycles.
+  const flushDraftRef = useRef<() => void>(() => {});
+  flushDraftRef.current = () => {
+    if (!content || !activeProjectId) return;
+    try {
+      const existing = readProjects();
+      const old = existing.find((p) => p.id === activeProjectId);
+      if (!old && existing.length >= PROJECT_LIMIT) return;
+      const now = new Date().toISOString();
+      localStorage.setItem(STORAGE, JSON.stringify([{
+        id: activeProjectId, date: old?.date || now, updatedAt: now,
+        content, format: settings.format, stage: stage === "outline" ? "outline" : "edit",
+        context: {
+          source_mode: settings.source_mode, reference_text: settings.reference_text,
+          document_type: settings.document_type, branding: {...brand}, layout: {...layout},
+          documentStyle, presentationStyle,
+        },
+      }, ...existing.filter((p) => p.id !== activeProjectId)]));
+    } catch { /* The visible autosave warning handles unavailable storage. */ }
+  };
+  useEffect(() => {
+    const flush = () => flushDraftRef.current();
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, []);
+
+  function exportProjectBackup() {
+    if (!projects.length) return;
+    const data = JSON.stringify({
+      kind: "maghrabi-office-project-backup", version: 1,
+      exportedAt: new Date().toISOString(), projects,
+    }, null, 2);
+    const url = URL.createObjectURL(new Blob([data], {type: "application/json"}));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "MAGHRABI-projects-backup.json";
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  async function importProjectBackup(file: File | undefined) {
+    if (!file) return;
+    try {
+      if (file.size > 3 * 1024 * 1024) throw new Error("ملف النسخة الاحتياطية أكبر من 3 ميجابايت.");
+      const parsed: unknown = JSON.parse(await file.text());
+      if (!parsed || typeof parsed !== "object") throw new Error("صيغة النسخة الاحتياطية غير صالحة.");
+      const obj = parsed as {kind?: string; version?: number; projects?: unknown};
+      if (obj.kind !== "maghrabi-office-project-backup" || obj.version !== 1 || !Array.isArray(obj.projects))
+        throw new Error("اختر ملف النسخة الاحتياطية الذي صدّرته من المنصة.");
+      const incoming = obj.projects as Project[];
+      if (incoming.length > PROJECT_LIMIT || !incoming.every(p =>
+        p && typeof p.id === "string" && p.id.length < 100 && typeof p.date === "string" &&
+        !Number.isNaN(Date.parse(p.date)) && isContent(p.content)))
+        throw new Error("تحتوي النسخة الاحتياطية على مشاريع غير صالحة.");
+      const merged = new Map(readProjects().map(p => [p.id, p]));
+      for (const p of incoming) {
+        const current = merged.get(p.id);
+        if (!current || (p.updatedAt || p.date) > (current.updatedAt || current.date))
+          merged.set(p.id, p);
+      }
+      if (merged.size > PROJECT_LIMIT) throw new Error("تجاوز مجموع المشاريع 50؛ احذف بعض المشاريع قبل الاستيراد.");
+      const next = [...merged.values()].sort((a,b) =>
+        (b.updatedAt || b.date).localeCompare(a.updatedAt || a.date));
+      localStorage.setItem(STORAGE, JSON.stringify(next));
+      setProjects(next);
+      setNotice("تم استيراد المشاريع بنجاح. يمكنك فتحها من صفحة مشاريعي.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "تعذر استيراد النسخة الاحتياطية.");
+    }
+  }
+
   async function upload(next: File | undefined) {
     if (!next) return;
     await run("جارٍ تحليل الملف…", async () => {
@@ -984,6 +1124,7 @@ export default function App() {
                     className="text-button"
                     disabled={!!busy}
                     onClick={() => {
+                      setActiveProjectId(crypto.randomUUID());
                       setContent(structuredClone(example));
                       setSettings({...initial, format: settings.format, document_type: settings.document_type});
                       setPrevious(null);
@@ -1015,7 +1156,13 @@ export default function App() {
                       <p className="muted">
                         {stage === "outline"
                           ? "رتّب العناوين أو أضف محورًا قبل الكتابة."
-                          : "يمكن تعديل جميع النصوص. الحفظ المحلي يتم عند الضغط على حفظ نسخة."}
+                          : "يُحفظ المشروع وتعديلاته تلقائيًا في صفحة «مشاريعي» على هذا المتصفح."}
+                      </p>
+                      <p className="small muted" role="status">
+                        {saveStatus === "saving" ? "جارٍ حفظ المشروع تلقائيًا…" :
+                         saveStatus === "saved" ? "تم حفظ المشروع تلقائيًا في «مشاريعي»" :
+                         saveStatus === "error" ? "تعذر الحفظ التلقائي؛ راجع رسالة الخطأ." :
+                         "سيُحفظ المشروع تلقائيًا أثناء العمل."}
                       </p>
                     </div>
                     <button
@@ -1595,7 +1742,21 @@ export default function App() {
                               disabled={!!busy}
                               onClick={saveProject}
                             >
-                              حفظ نسخة
+                              حفظ المشروع الآن
+                            </button>
+                            <button
+                              className="text-button"
+                              disabled={!!busy}
+                              onClick={() => persistProject(false, true)}
+                            >
+                              حفظ نسخة مستقلة
+                            </button>
+                            <button
+                              className="text-button"
+                              disabled={!!busy}
+                              onClick={() => changePage("projects")}
+                            >
+                              الانتقال إلى مشاريعي
                             </button>
                           </div>
                         </div>
@@ -1759,33 +1920,83 @@ export default function App() {
         {page === "projects" && (
           <>
             <div className="soft-note">
-              تُحفظ النسخ على هذا المتصفح فقط عند الضغط على «حفظ نسخة». لن تظهر
-              تلقائيًا على جهاز آخر.
+              تُحفظ مشاريع Word وPowerPoint والتعديلات تلقائيًا في هذه الصفحة على المتصفح الحالي.
+              يمكن إعادة فتح أي مشروع واستكمال العمل عليه. وللانتقال إلى جهاز آخر،
+              استخدم النسخة الاحتياطية؛ لم يُفعّل التخزين السحابي للحسابات بعد.
+            </div>
+            <div className="panel project-library-toolbar">
+              <div className="project-library-fields">
+                <label>
+                  البحث في مشاريعي
+                  <input
+                    aria-label="البحث في مشاريعي"
+                    value={projectQuery}
+                    onChange={(e) => setProjectQuery(e.target.value)}
+                    placeholder="ابحث بعنوان المشروع أو محتواه"
+                  />
+                </label>
+                <label>
+                  نوع المشروع
+                  <select aria-label="نوع المشروع" value={projectFormat}
+                    onChange={(e) => setProjectFormat(e.target.value as "all" | Format)}>
+                    <option value="all">جميع المشاريع</option>
+                    <option value="docx">مستندات Word</option>
+                    <option value="pptx">عروض PowerPoint</option>
+                  </select>
+                </label>
+              </div>
+              <div className="project-library-actions">
+                <span className="muted small">{projects.length} مشروع محفوظ</span>
+                <button type="button" className="button outline" disabled={!projects.length}
+                  onClick={exportProjectBackup}>تصدير نسخة احتياطية</button>
+                <button type="button" className="button outline"
+                  onClick={() => projectBackupInput.current?.click()}>استيراد نسخة احتياطية</button>
+                <input ref={projectBackupInput} type="file" accept=".json,application/json"
+                  aria-label="ملف النسخة الاحتياطية" className="visually-hidden"
+                  onChange={(e) => {
+                    void importProjectBackup(e.target.files?.[0]);
+                    e.target.value = "";
+                  }} />
+              </div>
             </div>
             {projects.length ? (
               <div className="project-grid">
-                {projects.map((p) => (
+                {projects.filter(p =>
+                  (projectFormat === "all" || (p.format || (p.context?.document_type && p.context.document_type !== "general" ? "docx" : "pptx")) === projectFormat) &&
+                  (!projectQuery.trim() || (
+                    p.content.title + " " + p.content.summary + " " +
+                    p.content.sections.map(s => s.title).join(" ")
+                  ).toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase()))
+                ).map((p) => (
                   <div className="panel project-card" key={p.id}>
                     <span className="app-icon files">◫</span>
-                    <h3>{p.content.title}</h3>
+                    <h3>{p.content.title.trim() || "مشروع بدون عنوان"}</h3>
                     <p className="muted">
-                      {p.content.sections.length} محاور ·{" "}
-                      {new Date(p.date).toLocaleDateString("ar-SA")}
+                      {(p.format || (p.context?.document_type && p.context.document_type !== "general" ? "docx" : "pptx")) === "docx" ? "مستند Word" : "عرض PowerPoint"}
+                      {" · "}{p.content.sections.length} محاور
+                      {" · "}{p.stage === "outline" ? "مخطط مبدئي" : "قابل للتحرير"}
+                    </p>
+                    <p className="muted small">
+                      آخر تعديل: {new Date(p.updatedAt || p.date).toLocaleString("ar-SA")}
                     </p>
                     <div className="action-row">
                       <button
                         className="button outline"
                         onClick={() => {
-                          setContent(p.content);
-                          setSettings({...initial, topic: p.content.title, language: p.content.language, source_mode: p.context?.source_mode === "reference" ? "reference" : "general", reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : "", document_type: p.context?.document_type && Object.keys(documentTypeLabels).includes(p.context.document_type) ? p.context.document_type : "general" });
+                          setActiveProjectId(p.id);
+                          setSaveStatus("saved");
+                          setContent(structuredClone(p.content));
+                          setSettings({...initial, format: p.format || "pptx", topic: p.content.title, language: p.content.language, source_mode: p.context?.source_mode === "reference" ? "reference" : "general", reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : "", document_type: p.context?.document_type && Object.keys(documentTypeLabels).includes(p.context.document_type) ? p.context.document_type : "general" });
                           setBrand(p.context?.branding && typeof p.context.branding === "object"
                             ? { ...emptyBrandFields, ...p.context.branding } : emptyBrandFields);
                           setLogoFile(null);
                           setLayout(p.context?.layout ? { ...defaultLayout, ...p.context.layout } : defaultLayout);
                           setDocumentStyle(p.context?.documentStyle && ["luxury", "corporate", "minimal"].includes(p.context.documentStyle) ? p.context.documentStyle : "luxury");
+                          setPresentationStyle(p.context?.presentationStyle && ["luxury", "corporate", "minimal"].includes(p.context.presentationStyle) ? p.context.presentationStyle : "luxury");
                           setPrevious(null);
-                          setStage("edit");
+                          setStage(p.stage === "outline" ? "outline" : "edit");
                           setSelected(0);
+                          setView(p.format || (p.context?.document_type && p.context.document_type !== "general" ? "docx" : "pptx"));
                           setPage("create");
                         }}
                       >
@@ -1819,6 +2030,11 @@ export default function App() {
                                 JSON.stringify(next),
                               );
                               setProjects(next);
+                              if (activeProjectId === p.id) {
+                                setActiveProjectId(null);
+                                setContent(null);
+                                setSaveStatus("idle");
+                              }
                               setDeleteId(null);
                             } catch {
                               setError("تعذر حذف النسخة من هذا المتصفح.");
@@ -1836,7 +2052,7 @@ export default function App() {
               <div className="panel empty-state">
                 <span>◫</span>
                 <h2>مساحتك تبدأ بمشروعك الأول</h2>
-                <p>أنشئ محتوى ثم احفظ نسخة لتعود إليها لاحقًا.</p>
+                <p>ابدأ مشروع Word أو PowerPoint، وسيظهر هنا تلقائيًا لتعود إليه لاحقًا.</p>
                 <button
                   className="button primary"
                   onClick={() => start("docx")}
