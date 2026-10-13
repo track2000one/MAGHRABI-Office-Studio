@@ -1156,7 +1156,13 @@ export default function App() {
                       <p className="muted">
                         {stage === "outline"
                           ? "رتّب العناوين أو أضف محورًا قبل الكتابة."
-                          : "يمكن تعديل جميع النصوص. الحفظ المحلي يتم عند الضغط على حفظ نسخة."}
+                          : "يُحفظ المشروع وتعديلاته تلقائيًا في صفحة «مشاريعي» على هذا المتصفح."}
+                      </p>
+                      <p className="small muted" role="status">
+                        {saveStatus === "saving" ? "جارٍ حفظ المشروع تلقائيًا…" :
+                         saveStatus === "saved" ? "تم حفظ المشروع تلقائيًا في «مشاريعي»" :
+                         saveStatus === "error" ? "تعذر الحفظ التلقائي؛ راجع رسالة الخطأ." :
+                         "سيُحفظ المشروع تلقائيًا أثناء العمل."}
                       </p>
                     </div>
                     <button
@@ -1736,7 +1742,21 @@ export default function App() {
                               disabled={!!busy}
                               onClick={saveProject}
                             >
-                              حفظ نسخة
+                              حفظ المشروع الآن
+                            </button>
+                            <button
+                              className="text-button"
+                              disabled={!!busy}
+                              onClick={() => persistProject(false, true)}
+                            >
+                              حفظ نسخة مستقلة
+                            </button>
+                            <button
+                              className="text-button"
+                              disabled={!!busy}
+                              onClick={() => changePage("projects")}
+                            >
+                              الانتقال إلى مشاريعي
                             </button>
                           </div>
                         </div>
@@ -1900,33 +1920,83 @@ export default function App() {
         {page === "projects" && (
           <>
             <div className="soft-note">
-              تُحفظ النسخ على هذا المتصفح فقط عند الضغط على «حفظ نسخة». لن تظهر
-              تلقائيًا على جهاز آخر.
+              تُحفظ مشاريع Word وPowerPoint والتعديلات تلقائيًا في هذه الصفحة على المتصفح الحالي.
+              يمكن إعادة فتح أي مشروع واستكمال العمل عليه. وللانتقال إلى جهاز آخر،
+              استخدم النسخة الاحتياطية؛ لم يُفعّل التخزين السحابي للحسابات بعد.
+            </div>
+            <div className="panel project-library-toolbar">
+              <div className="project-library-fields">
+                <label>
+                  البحث في مشاريعي
+                  <input
+                    aria-label="البحث في مشاريعي"
+                    value={projectQuery}
+                    onChange={(e) => setProjectQuery(e.target.value)}
+                    placeholder="ابحث بعنوان المشروع أو محتواه"
+                  />
+                </label>
+                <label>
+                  نوع المشروع
+                  <select aria-label="نوع المشروع" value={projectFormat}
+                    onChange={(e) => setProjectFormat(e.target.value as "all" | Format)}>
+                    <option value="all">جميع المشاريع</option>
+                    <option value="docx">مستندات Word</option>
+                    <option value="pptx">عروض PowerPoint</option>
+                  </select>
+                </label>
+              </div>
+              <div className="project-library-actions">
+                <span className="muted small">{projects.length} مشروع محفوظ</span>
+                <button type="button" className="button outline" disabled={!projects.length}
+                  onClick={exportProjectBackup}>تصدير نسخة احتياطية</button>
+                <button type="button" className="button outline"
+                  onClick={() => projectBackupInput.current?.click()}>استيراد نسخة احتياطية</button>
+                <input ref={projectBackupInput} type="file" accept=".json,application/json"
+                  aria-label="ملف النسخة الاحتياطية" className="visually-hidden"
+                  onChange={(e) => {
+                    void importProjectBackup(e.target.files?.[0]);
+                    e.target.value = "";
+                  }} />
+              </div>
             </div>
             {projects.length ? (
               <div className="project-grid">
-                {projects.map((p) => (
+                {projects.filter(p =>
+                  (projectFormat === "all" || (p.format || "pptx") === projectFormat) &&
+                  (!projectQuery.trim() || (
+                    p.content.title + " " + p.content.summary + " " +
+                    p.content.sections.map(s => s.title).join(" ")
+                  ).toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase()))
+                ).map((p) => (
                   <div className="panel project-card" key={p.id}>
                     <span className="app-icon files">◫</span>
-                    <h3>{p.content.title}</h3>
+                    <h3>{p.content.title.trim() || "مشروع بدون عنوان"}</h3>
                     <p className="muted">
-                      {p.content.sections.length} محاور ·{" "}
-                      {new Date(p.date).toLocaleDateString("ar-SA")}
+                      {(p.format || "pptx") === "docx" ? "مستند Word" : "عرض PowerPoint"}
+                      {" · "}{p.content.sections.length} محاور
+                      {" · "}{p.stage === "outline" ? "مخطط مبدئي" : "قابل للتحرير"}
+                    </p>
+                    <p className="muted small">
+                      آخر تعديل: {new Date(p.updatedAt || p.date).toLocaleString("ar-SA")}
                     </p>
                     <div className="action-row">
                       <button
                         className="button outline"
                         onClick={() => {
-                          setContent(p.content);
-                          setSettings({...initial, topic: p.content.title, language: p.content.language, source_mode: p.context?.source_mode === "reference" ? "reference" : "general", reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : "", document_type: p.context?.document_type && Object.keys(documentTypeLabels).includes(p.context.document_type) ? p.context.document_type : "general" });
+                          setActiveProjectId(p.id);
+                          setSaveStatus("saved");
+                          setContent(structuredClone(p.content));
+                          setSettings({...initial, format: p.format || "pptx", topic: p.content.title, language: p.content.language, source_mode: p.context?.source_mode === "reference" ? "reference" : "general", reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : "", document_type: p.context?.document_type && Object.keys(documentTypeLabels).includes(p.context.document_type) ? p.context.document_type : "general" });
                           setBrand(p.context?.branding && typeof p.context.branding === "object"
                             ? { ...emptyBrandFields, ...p.context.branding } : emptyBrandFields);
                           setLogoFile(null);
                           setLayout(p.context?.layout ? { ...defaultLayout, ...p.context.layout } : defaultLayout);
                           setDocumentStyle(p.context?.documentStyle && ["luxury", "corporate", "minimal"].includes(p.context.documentStyle) ? p.context.documentStyle : "luxury");
+                          setPresentationStyle(p.context?.presentationStyle && ["luxury", "corporate", "minimal"].includes(p.context.presentationStyle) ? p.context.presentationStyle : "luxury");
                           setPrevious(null);
-                          setStage("edit");
+                          setStage(p.stage === "outline" ? "outline" : "edit");
                           setSelected(0);
+                          setView(p.format || "pptx");
                           setPage("create");
                         }}
                       >
@@ -1960,6 +2030,11 @@ export default function App() {
                                 JSON.stringify(next),
                               );
                               setProjects(next);
+                              if (activeProjectId === p.id) {
+                                setActiveProjectId(null);
+                                setContent(null);
+                                setSaveStatus("idle");
+                              }
                               setDeleteId(null);
                             } catch {
                               setError("تعذر حذف النسخة من هذا المتصفح.");
@@ -1977,7 +2052,7 @@ export default function App() {
               <div className="panel empty-state">
                 <span>◫</span>
                 <h2>مساحتك تبدأ بمشروعك الأول</h2>
-                <p>أنشئ محتوى ثم احفظ نسخة لتعود إليها لاحقًا.</p>
+                <p>ابدأ مشروع Word أو PowerPoint، وسيظهر هنا تلقائيًا لتعود إليه لاحقًا.</p>
                 <button
                   className="button primary"
                   onClick={() => start("docx")}
