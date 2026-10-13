@@ -107,6 +107,7 @@ export default function App() {
   const [selected, setSelected] = useState(0);
   const [view, setView] = useState<Format>("pptx");
   const [presentationStyle, setPresentationStyle] = useState<"luxury" | "corporate" | "minimal">("luxury");
+  const [documentStyle, setDocumentStyle] = useState<"luxury" | "corporate" | "minimal">("luxury");
   const [projects, setProjects] = useState<Project[]>(readProjects);
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [file, setFile] = useState<File | null>(null);
@@ -296,7 +297,7 @@ export default function App() {
     await run("جارٍ تجهيز الملف…", async () => {
       validateContent(content);
       await downloadResponse(
-        await api(`/exports/${format}${format === "pptx" ? `?design_style=${presentationStyle}` : ""}`, jsonBody(content)),
+        await api(`/exports/${format}?design_style=${format === "pptx" ? presentationStyle : documentStyle}`, jsonBody(content)),
         `MAGHRABI-${format === "docx" ? "document" : "presentation"}.${format}`,
       );
       setNotice("تم تجهيز الملف وتنزيله. راجع تنسيقه النهائي في Office.");
@@ -1042,7 +1043,7 @@ export default function App() {
                             </div>
                           ) : (
                             <article
-                              className="document-preview"
+                              className={`document-preview document-preview--${documentStyle}`}
                               dir={content.language === "ar" ? "rtl" : "ltr"}
                             >
                               <h2>{content.title}</h2>
@@ -1077,6 +1078,23 @@ export default function App() {
                             </label>
                             <p className="muted small">
                               قوالب متنوعة: غلاف احترافي، فهرس للمحاور، بطاقات محتوى قابلة للتحرير وتوزيع آلي للنصوص الطويلة.
+                            </p>
+                          </div>
+                          <div className="presentation-style-control word-style-control">
+                            <label htmlFor="document-style">
+                              طابع تصميم Word
+                              <select
+                                id="document-style"
+                                value={documentStyle}
+                                onChange={(e) => setDocumentStyle(e.target.value as "luxury" | "corporate" | "minimal")}
+                              >
+                                <option value="luxury">فاخر — كحلي وذهبي</option>
+                                <option value="corporate">مؤسسي — كحلي وفيروزي</option>
+                                <option value="minimal">عصري — بنفسجي هادئ</option>
+                              </select>
+                            </label>
+                            <p className="muted small">
+                              ملف Word احترافي قابل للتحرير: صفحة غلاف، فهرس قابل للنقر، ملخص تنفيذي، عناوين منظمة وترويسات وتذييلات مع ترقيم الصفحات.
                             </p>
                           </div>
                           <div className="export-row">

@@ -1900,3 +1900,21 @@ textarea::placeholder {
 }
 .slide-preview--corporate { --accent-preview: #11979d; }
 .slide-preview--minimal { --accent-preview: #8474cb; }
+
+
+/* Word style previews approximate the native A4 DOCX palettes. */
+.word-style-control { margin-top: 14px; }
+.document-preview--luxury { border-top: 5px solid #b28b50; }
+.document-preview--corporate { border-top: 5px solid #118d91; }
+.document-preview--minimal { border-top: 5px solid #7665ba; }
+.document-preview--luxury h2, .document-preview--luxury h3 { color: #192b3e; }
+.document-preview--corporate h2, .document-preview--corporate h3 { color: #163a52; }
+.document-preview--minimal h2, .document-preview--minimal h3 { color: #28283c; }
+.document-preview--luxury h3 { border-bottom: 2px solid #b28b50; }
+.document-preview--corporate h3 { border-bottom: 2px solid #118d91; }
+.document-preview--minimal h3 { border-bottom: 2px solid #7665ba; }
+.document-preview--luxury h3,
+.document-preview--corporate h3,
+.document-preview--minimal h3 {
+  padding-bottom: 8px;
+}
