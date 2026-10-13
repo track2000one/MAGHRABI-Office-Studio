@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from typing import Literal
 from pathlib import Path
 import json
 import os
@@ -258,8 +259,8 @@ def docx_export(content: Content):
 
 
 @app.post('/api/v1/exports/pptx')
-def pptx_export(content: Content):
-    return download(export_pptx(content), 'pptx', 'MAGHRABI-presentation')
+def pptx_export(content: Content, design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury'):
+    return download(export_pptx(content, design_style), 'pptx', 'MAGHRABI-presentation')
 
 
 @app.post('/api/v1/files/format-docx')
