@@ -1,5 +1,6 @@
 """Server-only AI provider integration with Gemini support and optional OpenAI fallback."""
 import json
+import logging
 import os
 import secrets
 from threading import BoundedSemaphore
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 from .content import Content, GenerateRequest, ReviseRequest
 
 _slots = BoundedSemaphore(2)
+_logger = logging.getLogger(__name__)
 
 SYSTEM = (
     'Create accurate, coherent Office content. Never invent citations, statistics, names, dates, '
@@ -98,38 +100,58 @@ def _request_openai(client: httpx.Client, payload: dict) -> str:
             },
         },
     )
-    _raise_provider_error(response)
+    _raise_provider_error(response, 'openai')
     result = response.json()['choices'][0]
     if result.get('finish_reason') != 'stop' or result['message'].get('refusal'):
         raise HTTPException(502, 'لم يكتمل المحتوى. اختصر الطلب أو قلل عدد المحاور وحاول مجددًا.')
     return result['message']['content']
 
 
-def _request_gemini(client: httpx.Client, payload: dict) -> str:
-    model = os.environ['GEMINI_MODEL'].strip()
-    response = client.post(
-        f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',
-        headers={
-            'x-goog-api-key': os.environ['GEMINI_API_KEY'],
-            'Content-Type': 'application/json',
-        },
-        json={
-            'system_instruction': {'parts': [{'text': SYSTEM}]},
-            'contents': [{
-                'role': 'user',
-                'parts': [{'text': json.dumps(payload, ensure_ascii=False)}],
-            }],
-            'generationConfig': {
-                'responseFormat': {
-                    'text': {
-                        'mimeType': 'application/json',
-                        'schema': SCHEMA,
-                    },
-                },
-            },
-        },
+def _gemini_body(payload: dict, *, compatibility: bool = False) -> dict:
+    # Gemini exposes both format styles. Older models may reject responseFormat;
+    # in that case use responseMimeType + responseJsonSchema as a fallback.
+    generation_config = (
+        {'responseMimeType': 'application/json', 'responseJsonSchema': SCHEMA}
+        if compatibility
+        else {'responseFormat': {'text': {'mimeType': 'application/json', 'schema': SCHEMA}}}
     )
-    _raise_provider_error(response)
+    return {
+        'systemInstruction': {'parts': [{'text': SYSTEM}]},
+        'contents': [{
+            'role': 'user',
+            'parts': [{'text': json.dumps(payload, ensure_ascii=False)}],
+        }],
+        'generationConfig': generation_config,
+    }
+
+
+def _gemini_legacy_format_needed(response: httpx.Response) -> bool:
+    if response.status_code != 400:
+        return False
+    try:
+        message = str(response.json().get('error', {}).get('message', '')).lower()
+    except (ValueError, AttributeError, TypeError):
+        return False
+    # Fallback only on a known output-format incompatibility, not bad API keys.
+    return any(term in message for term in (
+        'responseformat', 'response_format', 'responsejsonschema',
+        'response_schema', 'responseschema', 'responsemimetype',
+        'response_mime_type',
+    ))
+
+
+def _request_gemini(client: httpx.Client, payload: dict) -> str:
+    model = os.environ['GEMINI_MODEL'].strip().removeprefix('models/')
+    url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
+    headers = {
+        'x-goog-api-key': os.environ['GEMINI_API_KEY'],
+        'Content-Type': 'application/json',
+    }
+    response = client.post(url, headers=headers, json=_gemini_body(payload))
+    if _gemini_legacy_format_needed(response):
+        _logger.info('Gemini response format unsupported; retrying compatible JSON schema')
+        response = client.post(url, headers=headers, json=_gemini_body(payload, compatibility=True))
+    _raise_provider_error(response, 'gemini')
     data = response.json()
     candidate = data['candidates'][0]
     if candidate.get('finishReason') not in (None, 'STOP'):
@@ -141,11 +163,31 @@ def _request_gemini(client: httpx.Client, payload: dict) -> str:
     return text
 
 
-def _raise_provider_error(response: httpx.Response) -> None:
+def _raise_provider_error(response: httpx.Response, provider: str) -> None:
+    if response.status_code < 400:
+        return
+    try:
+        error = response.json().get('error', {})
+        code = str(error.get('status', 'UNKNOWN')).upper()
+    except (ValueError, AttributeError, TypeError):
+        code = 'UNKNOWN'
+    # Only log HTTP status and canonical error category, never provider response
+    # bodies: they may contain sensitive data or user-authored prompts.
+    _logger.warning('AI provider failure: provider=%s http_status=%d category=%s',
+                    provider, response.status_code, code[:50])
     if response.status_code == 429:
-        raise HTTPException(429, 'بلغت الخدمة حد الاستخدام أو الرصيد. راجع إعدادات مزود الذكاء الاصطناعي.')
-    if response.status_code >= 400:
-        raise HTTPException(502, 'تعذر إكمال الطلب لدى مزود الذكاء الاصطناعي. راجع إعدادات الخدمة.')
+        raise HTTPException(429, 'تجاوز مزود الذكاء الاصطناعي حد الطلبات أو الرصيد (429). تحقق من الحصة والفوترة لدى المزود.')
+    if response.status_code == 401:
+        raise HTTPException(502, f'رفض {provider.upper()} مفتاح API (401). تحقق من صحة مفتاح المزود في Railway.')
+    if response.status_code == 403:
+        raise HTTPException(502, f'رفض {provider.upper()} صلاحيات الوصول (403). تحقق من صلاحية المفتاح وإتاحة الخدمة والقيود الجغرافية.')
+    if response.status_code == 404:
+        raise HTTPException(502, f'النموذج المحدد لدى {provider.upper()} غير متاح (404). راجع GEMINI_MODEL أو OPENAI_MODEL في Railway.')
+    if response.status_code == 400:
+        raise HTTPException(502, f'رفض {provider.upper()} تنسيق طلب التوليد (400). تحقق من توافق النموذج مع المخرجات المنظمة.')
+    if response.status_code >= 500:
+        raise HTTPException(502, f'مزود {provider.upper()} يواجه خطأً بالخدمة ({response.status_code}). حاول مرة أخرى لاحقًا.')
+    raise HTTPException(502, f'تعذر إكمال الطلب لدى {provider.upper()} (HTTP {response.status_code}). راجع إعدادات مزود الذكاء الاصطناعي.')
 
 
 def request_content(payload: dict) -> Content:
