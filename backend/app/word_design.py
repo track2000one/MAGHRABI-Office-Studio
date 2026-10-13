@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
+from PIL import Image
+from .document_customization import WordCustomization
 
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
@@ -205,14 +207,19 @@ def _setup_styles(doc, theme: Theme, rtl: bool):
         _set_font(doc.styles[label], theme, 13, theme.muted)
 
 
-def _cover(doc, content: Content, theme: Theme, rtl: bool, document_type: str = "general"):
+def _cover(doc, content: Content, theme: Theme, rtl: bool, document_type: str = "general", custom: WordCustomization | None = None, logo: bytes | None = None):
     lead = doc.add_paragraph()
     lead.paragraph_format.space_before = Pt(18)
     lead.paragraph_format.space_after = Pt(14)
-    run = lead.add_run("MAGHRABI  /  OFFICE STUDIO")
-    run.font.size = Pt(11)
-    run.font.bold = True
-    run.font.color.rgb = _color(theme.accent)
+    if logo:
+        _logo_run(lead, logo)
+        lead.add_run("  ")
+    brand = (custom.organization_name if custom else "") or ("" if logo else "MAGHRABI  /  OFFICE STUDIO")
+    if brand:
+        run = lead.add_run(brand)
+        run.font.size = Pt(12 if custom and custom.organization_name else 11)
+        run.font.bold = True
+        run.font.color.rgb = _color(theme.accent)
     _paragraph_direction(lead, rtl)
     _rule(lead, theme.accent, size=21)
 
@@ -323,12 +330,16 @@ def _summary(doc, content: Content, theme: Theme, rtl: bool, document_type: str 
     after.paragraph_format.space_after = Pt(3)
 
 
-def _configure_header_footer(doc, theme: Theme, rtl: bool):
+def _configure_header_footer(doc, theme: Theme, rtl: bool, custom: WordCustomization | None = None, logo: bytes | None = None):
     section = doc.sections[0]
     section.different_first_page_header_footer = True
     header = section.header.paragraphs[0]
     header.paragraph_format.space_after = Pt(0)
-    mark = header.add_run("MAGHRABI   OFFICE STUDIO")
+    if logo:
+        _logo_run(header, logo, max_width=.68, max_height=.42)
+        header.add_run("  ")
+    label = ((custom.header_text or custom.organization_name) if custom else "") or ("" if logo else "MAGHRABI   OFFICE STUDIO")
+    mark = header.add_run(label)
     mark.bold = True
     mark.font.size = Pt(8)
     mark.font.color.rgb = _color(theme.muted)
@@ -337,7 +348,9 @@ def _configure_header_footer(doc, theme: Theme, rtl: bool):
 
     footer = section.footer.paragraphs[0]
     footer.paragraph_format.space_after = Pt(0)
-    text = footer.add_run("MAGHRABI  |  " + ("صفحة " if rtl else "Page "))
+    footer_label = (custom.footer_text or custom.organization_name) if custom else ""
+    brand = footer_label or ("" if logo else "MAGHRABI")
+    text = footer.add_run((brand + "  |  " if brand else "") + ("صفحة " if rtl else "Page "))
     text.font.size = Pt(8)
     text.font.color.rgb = _color(theme.muted)
     _field(footer, "PAGE")
@@ -403,7 +416,7 @@ def _template_overview(doc, content: Content, theme: Theme, rtl: bool, document_
     spacer.paragraph_format.space_after = Pt(4)
 
 
-def _formal_letter(doc, content: Content, theme: Theme, rtl: bool):
+def _formal_letter(doc, content: Content, theme: Theme, rtl: bool, custom: WordCustomization | None = None, logo: bytes | None = None):
     """Compact correspondence layout; never invent recipient, date or signature."""
     section = doc.sections[0]
     # Letterhead is deliberately unbranded; no fictitious government letterhead.
@@ -411,6 +424,14 @@ def _formal_letter(doc, content: Content, theme: Theme, rtl: bool):
     section.bottom_margin = Inches(.86)
     section.different_first_page_header_footer = False
     header = section.header.paragraphs[0]
+    if logo:
+        _logo_run(header, logo, max_width=1.10, max_height=.62)
+        header.add_run("  ")
+    if custom and (custom.header_text or custom.organization_name):
+        mark = header.add_run(custom.header_text or custom.organization_name)
+        mark.font.bold = True
+        mark.font.size = Pt(10)
+        mark.font.color.rgb = _color(theme.dark)
     _rule(header, theme.accent, size=14)
     _paragraph_direction(header, rtl)
 
@@ -450,14 +471,70 @@ def _formal_letter(doc, content: Content, theme: Theme, rtl: bool):
     # A small footer uses neutral document page numbering, not an official seal.
     footer = section.footer.paragraphs[0]
     _paragraph_direction(footer, rtl)
-    num = footer.add_run(("صفحة " if rtl else "Page "))
+    label = custom.footer_text if custom else ""
+    num = footer.add_run((label + "  |  " if label else "") + ("صفحة " if rtl else "Page "))
     num.font.size = Pt(8)
     num.font.color.rgb = _color(theme.muted)
     _field(footer, "PAGE")
 
 
+
+def _logo_run(paragraph, logo: bytes, *, max_width=1.6, max_height=.8):
+    with Image.open(BytesIO(logo)) as img:
+        width, height = img.size
+    scale = min(max_width / width, max_height / height)
+    paragraph.add_run().add_picture(BytesIO(logo), width=Inches(width * scale),
+                                    height=Inches(height * scale))
+
+
+def _supplied_table(doc, custom: WordCustomization, theme: Theme, rtl: bool):
+    """Insert a table of actual user-provided values with a repeating heading row."""
+    if not custom.table_rows:
+        return
+    caption = doc.add_heading(custom.table_title or
+                              ("جدول البيانات" if rtl else "DATA TABLE"), level=2)
+    _paragraph_direction(caption, rtl)
+    count = len(custom.table_rows[0])
+    table = doc.add_table(rows=0, cols=count)
+    table.style = "Table Grid"
+    table.autofit = False
+    column_width = Inches(6.42 / count)
+    for column in table.columns:
+        column.width = column_width
+    if rtl:
+        table._tbl.tblPr.append(OxmlElement("w:bidiVisual"))
+    for index, values in enumerate(custom.table_rows):
+        cells = table.add_row().cells
+        for col, cell in enumerate(cells):
+            cell.width = column_width
+            cell.text = values[col]
+            _set_cell_margins(cell, top=110, bottom=110, start=140, end=140)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            if index == 0:
+                _shade_cell(cell, theme.dark)
+            elif index % 2 == 0:
+                _shade_cell(cell, theme.pale)
+            for p in cell.paragraphs:
+                p.paragraph_format.space_after = Pt(0)
+                p.paragraph_format.line_spacing = 1.12
+                _paragraph_direction(p, rtl)
+                for run in p.runs:
+                    run.font.name = theme.face
+                    run.font.size = Pt(9)
+                    run.font.bold = index == 0
+                    run.font.color.rgb = _color("FFFFFF" if index == 0 else theme.dark)
+        properties = table.rows[-1]._tr.get_or_add_trPr()
+        if index == 0:
+            header = OxmlElement("w:tblHeader")
+            header.set(qn("w:val"), "true")
+            properties.append(header)
+        properties.append(OxmlElement("w:cantSplit"))
+
+
 def export_premium_docx(content: Content, design_style: str = "luxury",
-                        document_type: str = "general") -> bytes:
+                        document_type: str = "general",
+                        customization: WordCustomization | None = None,
+                        logo: bytes | None = None) -> bytes:
     if design_style not in STYLE_NAMES:
         raise ValueError("Unsupported Word design style")
     if document_type not in DOCUMENT_TYPES:
@@ -477,14 +554,16 @@ def export_premium_docx(content: Content, design_style: str = "luxury",
 
     _setup_styles(doc, theme, rtl)
     if document_type == "letter":
-        _formal_letter(doc, content, theme, rtl)
+        _formal_letter(doc, content, theme, rtl, customization, logo)
     else:
-        _configure_header_footer(doc, theme, rtl)
-        _cover(doc, content, theme, rtl, document_type)
+        _configure_header_footer(doc, theme, rtl, customization, logo)
+        _cover(doc, content, theme, rtl, document_type, customization, logo)
         _contents(doc, content, theme, rtl)
         _summary(doc, content, theme, rtl, document_type)
         _template_overview(doc, content, theme, rtl, document_type)
         _sections(doc, content, theme, rtl)
+    if customization is not None:
+        _supplied_table(doc, customization, theme, rtl)
 
     doc.core_properties.title = content.title
     doc.core_properties.subject = DOCUMENT_LABELS[document_type][0 if rtl else 1]
