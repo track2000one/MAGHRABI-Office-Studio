@@ -232,6 +232,14 @@ def ai_logout(request: Request, response: Response):
     return {"authenticated": False}
 
 
+@app.post('/api/v1/ai/test')
+def test_ai_connection(request: Request, authorization: str | None = Header(default=None)):
+    """An opt-in real generation test (small provider usage, not a configuration check)."""
+    _require_ai_access(request, authorization)
+    ai.generate(GenerateRequest(topic="اختبار جاهزية توليد محتوى عربي", section_count=2))
+    return {"ok": True, "provider": ai.status()["provider"]}
+
+
 @app.post('/api/v1/ai/generate', response_model=Content)
 def generate_content(request: GenerateRequest, http_request: Request, authorization: str | None = Header(default=None)):
     _require_ai_access(http_request, authorization)
