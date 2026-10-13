@@ -7,6 +7,11 @@ RUN npm run build
 
 FROM python:3.12-slim
 WORKDIR /app
+# LibreOffice renders the exact generated DOCX pages to PDF, with Arabic glyph
+# shaping and a bundled fallback font. Conversion runs as unprivileged studio.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-writer fonts-noto-core fonts-liberation2 \
+    && rm -rf /var/lib/apt/lists/*
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app/backend
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
