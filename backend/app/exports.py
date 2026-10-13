@@ -31,10 +31,11 @@ def paragraph_style(paragraph, rtl=True):
 
 
 def export_docx(content: Content, design_style: str = "luxury",
-                document_type: str = "general") -> bytes:
-    """Premium fully editable DOCX output, optionally with specialized document layout."""
+                document_type: str = "general",
+                customization=None, logo: bytes | None = None) -> bytes:
+    """Premium fully editable DOCX output, optionally customized from user input."""
     from .word_design import export_premium_docx
-    return export_premium_docx(content, design_style, document_type)
+    return export_premium_docx(content, design_style, document_type, customization, logo)
 
 
 def format_docx(data: bytes) -> bytes:
