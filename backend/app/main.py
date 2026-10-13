@@ -7,12 +7,13 @@ import os
 from zipfile import ZipFile, BadZipFile
 
 from docx import Document
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Header
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Header, Request
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
-from . import ai
+from . import ai, ai_session
 from .exports import export_docx, export_pptx, format_docx
 from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
@@ -171,20 +172,75 @@ def download(data: bytes, kind: str, filename: str):
     })
 
 
+class AccessTokenLogin(BaseModel):
+    access_token: str = Field(min_length=1, max_length=512)
+
+
+def _secure_session_cookie(request: Request) -> bool:
+    # Railway terminates TLS upstream; local HTTP development must still work.
+    return request.url.scheme == "https" or bool(os.getenv("RAILWAY_ENVIRONMENT"))
+
+
+def _require_ai_access(request: Request, authorization: str | None) -> None:
+    # A custom header makes cross-origin form submissions unusable as AI requests.
+    if (
+        request.headers.get("X-Maghrabi-Client") == "studio"
+        and ai_session.session_is_valid(request.cookies.get(ai_session.COOKIE_NAME))
+    ):
+        return
+    # Preserve legacy Bearer clients until they migrate to the login endpoint.
+    ai.authorize(authorization)
+
+
 @app.get('/api/v1/ai/status')
-def ai_status():
-    return ai.status()
+def ai_status(request: Request, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        **ai.status(),
+        "authenticated": ai_session.session_is_valid(request.cookies.get(ai_session.COOKIE_NAME)),
+    }
+
+
+@app.post('/api/v1/ai/login')
+def ai_login(payload: AccessTokenLogin, request: Request, response: Response):
+    ai.authorize("Bearer " + payload.access_token)
+    response.set_cookie(
+        key=ai_session.COOKIE_NAME,
+        value=ai_session.create_session(),
+        max_age=ai_session.SESSION_MAX_AGE,
+        path="/api/v1/ai",
+        secure=_secure_session_cookie(request),
+        httponly=True,
+        samesite="strict",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"authenticated": True}
+
+
+@app.post('/api/v1/ai/logout')
+def ai_logout(request: Request, response: Response):
+    if request.headers.get("X-Maghrabi-Client") != "studio":
+        raise HTTPException(403, "طلب تسجيل الخروج غير صالح.")
+    response.delete_cookie(
+        key=ai_session.COOKIE_NAME,
+        path="/api/v1/ai",
+        secure=_secure_session_cookie(request),
+        httponly=True,
+        samesite="strict",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"authenticated": False}
 
 
 @app.post('/api/v1/ai/generate', response_model=Content)
-def generate_content(request: GenerateRequest, authorization: str | None = Header(default=None)):
-    ai.authorize(authorization)
+def generate_content(request: GenerateRequest, http_request: Request, authorization: str | None = Header(default=None)):
+    _require_ai_access(http_request, authorization)
     return ai.generate(request)
 
 
 @app.post('/api/v1/ai/revise', response_model=Content)
-def revise_content(request: ReviseRequest, authorization: str | None = Header(default=None)):
-    ai.authorize(authorization)
+def revise_content(request: ReviseRequest, http_request: Request, authorization: str | None = Header(default=None)):
+    _require_ai_access(http_request, authorization)
     return ai.revise(request)
 
 
