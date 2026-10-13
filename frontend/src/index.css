@@ -1999,3 +1999,15 @@ textarea::placeholder {
   .word-preset-actions .button { width: 100%; }
   .document-preview-margins--spacious { padding: 31px 24px; }
 }
+
+
+/* Full Word page preview is generated from the actual DOCX using LibreOffice. */
+.word-preview-toolbar { display: flex; justify-content: center; margin: 12px 0; }
+.word-preview-toolbar .button { width: 100%; max-width: 440px; }
+.word-real-preview { background: #eff3f6; border: 1px solid #cddbe4; border-radius: 12px; overflow: hidden; min-width: 0; }
+.word-real-preview-bar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: #fff; border-bottom: 1px solid #d8e3ea; padding: 11px 15px; font-size: 12px; color: #27465c; }
+.word-real-preview-bar span { color: #697e8f; }
+.word-real-preview-bar a { font-weight: 700; text-decoration: underline; }
+.word-preview-pdf-frame { display: block; width: 100%; height: min(75vh, 790px); min-height: 520px; background: #e9eef1; border: 0; }
+.word-real-preview > p { margin: 0; padding: 9px 14px; font-size: 11px; }
+@media (max-width: 650px) { .word-preview-pdf-frame { min-height: 420px; height: 62vh; } }
