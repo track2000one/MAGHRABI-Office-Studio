@@ -81,6 +81,26 @@ describe("Office Studio workflows", () => {
     expect(call[1]?.headers).not.toHaveProperty("OPENAI_API_KEY");
   });
 
+  it("exports chosen premium PowerPoint theme without affecting Word export", async () => {
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:pptx");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await user.selectOptions(screen.getByLabelText("طابع تصميم PowerPoint"), "minimal");
+    expect(screen.getByText("فاخر — كحلي وذهبي")).toBeInTheDocument();
+    expect(document.querySelector(".slide-preview--minimal")).toBeTruthy();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("pptx-bytes", { status: 200 }));
+    await user.click(screen.getByRole("button", { name: "تنزيل PowerPoint" }));
+    await waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/exports/pptx?design_style=minimal"))).toBe(true);
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("docx-bytes", { status: 200 }));
+    await user.click(screen.getByRole("button", { name: "تنزيل Word" }));
+    await waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/exports/docx"))).toBe(true);
+    });
+  });
+
   it("uploads the actual file to analysis and renders returned metrics", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
