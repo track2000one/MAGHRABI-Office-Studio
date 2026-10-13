@@ -41,7 +41,7 @@ def test_gemini_retries_legacy_schema_when_provider_does_not_support_response_fo
                 json={"error": {"status": "INVALID_ARGUMENT", "message": "Unknown name responseFormat at generationConfig"}},
             )
         return httpx.Response(200, json={
-            "candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "{\\"title\\":\\"demo\\"}"}]}}],
+            "candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": json.dumps({"title": "demo"})}]}}],
         })
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
