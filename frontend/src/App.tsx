@@ -1271,6 +1271,20 @@ export default function App() {
                                 {selected + 1} / {content.sections.length}
                               </small>
                             </div>
+                          ) : wordPagePreview && wordPagePreview.fingerprint === wordPreviewFingerprint ? (
+                            <section className="word-real-preview" aria-label="المعاينة الفعلية لصفحات Word">
+                              <div className="word-real-preview-bar">
+                                <strong>معاينة الصفحات الفعلية</strong>
+                                <span>{wordPagePreview.pages ? wordPagePreview.pages + " صفحة" : "ملف PDF جاهز للمعاينة"}</span>
+                                <a href={wordPagePreview.url} target="_blank" rel="noopener noreferrer">عرض مكبّر</a>
+                              </div>
+                              <iframe
+                                title="صفحات مستند Word الفعلية"
+                                src={wordPagePreview.url + "#toolbar=1&navpanes=0&view=FitH"}
+                                className="word-preview-pdf-frame"
+                              />
+                              <p className="small muted">هذه نسخة PDF للمعاينة فقط. زر «تنزيل Word» ينزّل ملف DOCX القابل للتحرير بالإعدادات نفسها.</p>
+                            </section>
                           ) : (
                             <article
                               className={`document-preview document-preview--${documentStyle} document-preview-kind--${settings.document_type} document-preview--${layout.pageOrientation} document-preview-margins--${layout.pageMargins}`}
@@ -1302,10 +1316,17 @@ export default function App() {
                               </div>
                             </article>
                           )}
+                          <div className="word-preview-toolbar">
+                            <button type="button" className="button outline" disabled={!!busy} onClick={() => void previewActualWordPages()}>
+                              معاينة الصفحات الفعلية لملف Word
+                            </button>
+                          </div>
                           <p className="small muted">
-                            معاينة للمحتوى؛ قد تختلف فواصل الصفحات والخطوط في
-                            Office. الشرائح الطويلة تُقسّم تلقائيًا عند التصدير،
-                            وتُضاف شريحة غلاف.
+                            {view === "docx"
+                              ? (wordPagePreview && wordPagePreview.fingerprint === wordPreviewFingerprint
+                                ? "صفحات PDF محوّلة من مستند Word الحالي؛ وقد تختلف فروق طفيفة في الخطوط عن Microsoft Word."
+                                : "المعاينة النصية أعلاه تقريبية. اضغط «معاينة الصفحات الفعلية» لرؤية فواصل الصفحات والترويسات والجداول.")
+                              : "معاينة الشرائح تقريبية؛ المحتوى الطويل يُقسّم تلقائيًا عند تصدير PowerPoint."}
                           </p>
                           <div className="presentation-style-control">
                             <label htmlFor="presentation-style">
