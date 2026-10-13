@@ -162,12 +162,14 @@ describe("Office Studio workflows", () => {
       new Response(JSON.stringify(example)),
     );
     await user.click(screen.getByRole("button", { name: /اقترح مخطط المحتوى/ }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+      String(url).endsWith("/ai/generate"))).toBe(true));
     const generate = vi.mocked(fetch).mock.calls.find(([url]) =>
-      String(url).endsWith("/ai/generate"));
-    // Requests can be rejected when no user access cookie is provided, but the
-    // form still preserves the chosen document kind before submission.
-    expect(screen.getByLabelText("نوع مستند Word")).toHaveValue("letter");
-    expect(generate).toBeUndefined();
+      String(url).endsWith("/ai/generate"))!;
+    const request = JSON.parse(generate[1]!.body as string);
+    expect(request.document_type).toBe("letter");
+    expect(request.section_count).toBe(2);
+    expect(request.format).toBe("docx");
   });
 
   it("uploads the actual file to analysis and renders returned metrics", async () => {
