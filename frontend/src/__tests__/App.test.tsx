@@ -225,6 +225,31 @@ describe("Office Studio workflows", () => {
     expect(makeUrl).toHaveBeenCalled();
   });
 
+  it("imports a validated project backup into My Projects without erasing existing records", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", {name: "مشاريعي"}));
+    const sample = {
+      id: "portable-project", date: "2026-10-13T00:00:00.000Z",
+      updatedAt: "2026-10-13T02:00:00.000Z",
+      content: {...example, title: "مشروع مستورد للتجربة"},
+      format: "docx", stage: "edit",
+      context: {source_mode: "general", reference_text: "", document_type: "study"},
+    };
+    const json = JSON.stringify({
+      kind: "maghrabi-office-project-backup", version: 1,
+      projects: [sample],
+    });
+    const backup = new File([json], "study-backup.json", {type: "application/json"});
+    Object.defineProperty(backup, "text", {value: () => Promise.resolve(json)});
+    await user.upload(screen.getByLabelText("ملف النسخة الاحتياطية"), backup);
+    expect(await screen.findByText("مشروع مستورد للتجربة")).toBeVisible();
+    expect(JSON.parse(localStorage.getItem("maghrabi-office-projects-v1")!)[0].id)
+      .toBe("portable-project");
+    await user.click(screen.getByRole("button", {name: "فتح وتحرير"}));
+    expect(screen.getByLabelText("نوع مستند Word")).toHaveValue("study");
+  });
+
   it("exports chosen premium PowerPoint theme without affecting Word export", async () => {
     const user = await openExample();
     URL.createObjectURL = vi.fn(() => "blob:pptx");
