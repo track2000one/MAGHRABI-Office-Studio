@@ -42,6 +42,10 @@ def test_ai_session_routes_and_authorization(monkeypatch):
         assert client.get("/api/v1/ai/status").json()["authenticated"] is True
 
         # The browser's custom header is required for cookie-authorized AI calls.
+        assert client.post("/api/v1/ai/test").status_code == 401
+        test_result = client.post("/api/v1/ai/test", headers={"X-Maghrabi-Client": "studio"})
+        assert test_result.status_code == 200
+        assert test_result.json() == {"ok": True, "provider": "gemini"}
         assert client.post("/api/v1/ai/generate", json=payload).status_code == 401
         created = client.post(
             "/api/v1/ai/generate",
