@@ -113,7 +113,7 @@ describe("Office Studio workflows", () => {
       new Response(JSON.stringify({ configured: true })),
     );
     render(<App />);
-    expect(await screen.findByText("الخدمة متصلة · يلزم تسجيل الدخول")).toBeVisible();
+    expect(await screen.findByText("المزود مهيأ · يلزم تسجيل الدخول")).toBeVisible();
     await user.click(screen.getByRole("button", { name: /إعدادات الاتصال/ }));
     await user.type(screen.getByLabelText("رمز الوصول للمنصة"), "test-token");
     vi.mocked(fetch).mockResolvedValueOnce(
@@ -183,13 +183,50 @@ it("restores authenticated cookie sessions and clears old browser-stored tokens"
   );
   const user = userEvent.setup();
   render(<App />);
-  await screen.findByText("الذكاء الاصطناعي جاهز للاستخدام");
+  await screen.findByText("إعدادات الذكاء الاصطناعي مكتملة · لم يُختبر التوليد");
   await user.click(screen.getByRole("button", { name: /إعدادات الاتصال/ }));
   expect(screen.getByText("مسجل الدخول")).toBeVisible();
   expect(screen.queryByLabelText("رمز الوصول للمنصة")).not.toBeInTheDocument();
   expect(sessionStorage.getItem("maghrabi-office-access-token-v1")).toBeNull();
 });
 
+
+it("tests real AI generation only when explicitly requested", async () => {
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(JSON.stringify({ configured: true, authenticated: true }), { status: 200 }),
+  );
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByText("إعدادات الذكاء الاصطناعي مكتملة · لم يُختبر التوليد");
+  await user.click(screen.getByRole("button", { name: /إعدادات الاتصال/ }));
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/ai/test"))).toBe(false);
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(JSON.stringify({ ok: true, provider: "gemini" }), { status: 200 }),
+  );
+  await user.click(screen.getByRole("button", { name: "اختبار توليد تجريبي" }));
+  expect(await screen.findByText("الذكاء الاصطناعي يعمل · اختبار ناجح")).toBeVisible();
+  expect(screen.getByText(/نجح اختبار التوليد الفعلي/)).toBeVisible();
+  const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/ai/test"))!;
+  expect(call[1]?.method).toBe("POST");
+  expect(call[1]?.credentials).toBe("same-origin");
+  expect((call[1]?.headers as Headers).get("X-Maghrabi-Client")).toBe("studio");
+});
+
+it("shows the upstream diagnostic without reporting a successful test", async () => {
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(JSON.stringify({ configured: true, authenticated: true }), { status: 200 }),
+  );
+  const user = userEvent.setup();
+  render(<App />);
+  await screen.findByText("إعدادات الذكاء الاصطناعي مكتملة · لم يُختبر التوليد");
+  await user.click(screen.getByRole("button", { name: /إعدادات الاتصال/ }));
+  vi.mocked(fetch).mockResolvedValueOnce(
+    new Response(JSON.stringify({ detail: "النموذج المحدد لدى GEMINI غير متاح (404)." }), { status: 502 }),
+  );
+  await user.click(screen.getByRole("button", { name: "اختبار توليد تجريبي" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("GEMINI");
+  expect(screen.getByText("إعدادات الذكاء الاصطناعي مكتملة · لم يُختبر التوليد")).toBeVisible();
+});
 
 it("opens PDF Studio and submits page-size editing settings", async () => {
   const create = vi.fn(() => "blob:pdf-preview");
