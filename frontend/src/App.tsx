@@ -443,7 +443,7 @@ export default function App() {
       const next = [item, ...savedDesigns];
       localStorage.setItem(DESIGN_STORAGE, JSON.stringify(next));
       setSavedDesigns(next);
-      setSelectedDesignId(item.id);
+      setSelectedDesignId("");
       setNewDesignName("");
       setError("");
       setNotice("تم حفظ إعدادات تصميم Word على هذا المتصفح، دون ملف الشعار.");
