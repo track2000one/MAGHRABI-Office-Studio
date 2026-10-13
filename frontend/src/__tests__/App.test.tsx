@@ -81,6 +81,70 @@ describe("Office Studio workflows", () => {
     expect(call[1]?.headers).not.toHaveProperty("OPENAI_API_KEY");
   });
 
+  it("renders paginated PDF made from current Word export and invalidates on edits", async () => {
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:actual-pages");
+    URL.revokeObjectURL = vi.fn();
+    await user.click(screen.getByRole("button", { name: "معاينة Word" }));
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      new Blob(["pdf-data"], { type: "application/pdf" }), {
+        status: 200,
+        headers: { "Content-Type": "application/pdf", "X-Preview-Pages": "4" },
+      },
+    ));
+    await user.click(screen.getByRole("button", { name: "معاينة الصفحات الفعلية لملف Word" }));
+    expect(await screen.findByTitle("صفحات مستند Word الفعلية")).toHaveAttribute(
+      "src", expect.stringContaining("blob:actual-pages"),
+    );
+    expect(screen.getByText("4 صفحة")).toBeVisible();
+    const call = vi.mocked(fetch).mock.calls.find(([url]) =>
+      String(url).includes("/exports/docx?") && String(url).includes("preview=true"))!;
+    expect(JSON.parse(call[1]!.body as string).title).toBe(example.title);
+    await user.clear(screen.getByLabelText("عنوان المستند"));
+    await user.type(screen.getByLabelText("عنوان المستند"), "عنوان معدل بعد المعاينة");
+    expect(screen.queryByTitle("صفحات مستند Word الفعلية")).not.toBeInTheDocument();
+    expect(screen.getByText(/المعاينة النصية أعلاه تقريبية/)).toBeVisible();
+  });
+
+  it("uses exactly the same customized Word inputs for visual preview and editable download", async () => {
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:preview-pdf");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await user.selectOptions(screen.getByLabelText("هوامش الصفحة"), "compact");
+    await user.type(screen.getByLabelText("اسم الجهة (اختياري)"), "قسم الاختبار");
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      new Blob(["pdf-data"], { type: "application/pdf" }), {
+        status: 200, headers: {"Content-Type": "application/pdf", "X-Preview-Pages": "2"},
+      },
+    ));
+    await user.click(screen.getByRole("button", { name: "معاينة الصفحات الفعلية لملف Word" }));
+    await screen.findByTitle("صفحات مستند Word الفعلية");
+    const preview = vi.mocked(fetch).mock.calls.find(([url]) =>
+      String(url).includes("/exports/docx/custom?") && String(url).includes("preview=true"))!;
+    expect(JSON.parse((preview[1]!.body as FormData).get("customization_json") as string))
+      .toMatchObject({organization_name: "قسم الاختبار", page_margins: "compact"});
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("word-data", {status: 200}));
+    await user.click(screen.getByRole("button", {name: "تنزيل Word"}));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+      String(url).includes("/exports/docx/custom?") && !String(url).includes("preview=true"))).toBe(true));
+    const normal = vi.mocked(fetch).mock.calls.find(([url]) =>
+      String(url).includes("/exports/docx/custom?") && !String(url).includes("preview=true"))!;
+    expect((normal[1]!.body as FormData).get("customization_json"))
+      .toBe((preview[1]!.body as FormData).get("customization_json"));
+  });
+
+  it("shows actionable server-side PDF preview conversion errors", async () => {
+    const user = await openExample();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      JSON.stringify({detail: "محرّك معاينة الصفحات غير متاح في الخادم."}), {
+        status: 503, headers: {"Content-Type": "application/json"},
+      },
+    ));
+    await user.click(screen.getByRole("button", { name: "معاينة الصفحات الفعلية لملف Word" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("محرّك معاينة الصفحات غير متاح");
+  });
+
   it("exports chosen premium PowerPoint theme without affecting Word export", async () => {
     const user = await openExample();
     URL.createObjectURL = vi.fn(() => "blob:pptx");
