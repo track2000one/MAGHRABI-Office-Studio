@@ -263,6 +263,36 @@ def docx_export(
     return download(export_docx(content, design_style, document_type), 'docx', 'MAGHRABI-document')
 
 
+@app.post('/api/v1/exports/docx/custom')
+async def docx_custom_export(
+    content_json: str = Form(...),
+    customization_json: str = Form(default="{}"),
+    design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury',
+    document_type: Literal['general', 'report', 'study', 'strategy', 'letter'] = 'general',
+    logo: UploadFile | None = File(default=None),
+):
+    """One-off editable document export. User-provided logo is never persisted."""
+    if len(content_json) > 200_000 or len(customization_json) > 20_000:
+        raise HTTPException(413, "حجم بيانات المستند أكبر من الحد المسموح.")
+    try:
+        content = Content.model_validate_json(content_json)
+        customization = WordCustomization.model_validate_json(customization_json)
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(422, "تحقق من بيانات المستند وتناسق أعمدة الجدول.") from exc
+    logo_data = None
+    if logo is not None:
+        # Never trust file extension or content-type; inspect actual pixel data.
+        logo_data = await logo.read(MAX_LOGO_BYTES + 1)
+        try:
+            logo_data = validate_logo_bytes(logo_data)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        finally:
+            await logo.close()
+    return download(export_docx(content, design_style, document_type, customization, logo_data),
+                    'docx', 'MAGHRABI-document')
+
+
 @app.post('/api/v1/exports/pptx')
 def pptx_export(content: Content, design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury'):
     return download(export_pptx(content, design_style), 'pptx', 'MAGHRABI-presentation')
