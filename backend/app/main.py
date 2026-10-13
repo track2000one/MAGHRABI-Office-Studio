@@ -13,10 +13,12 @@ from pydantic import BaseModel, Field, ValidationError
 from .document_customization import WordCustomization, MAX_LOGO_BYTES, validate_logo_bytes
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
 from . import ai, ai_session
 from .exports import export_docx, export_pptx, format_docx
+from .word_preview import render_word_preview
 from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
 from pptx import Presentation
@@ -259,8 +261,12 @@ def docx_export(
     content: Content,
     design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury',
     document_type: Literal['general', 'report', 'study', 'strategy', 'letter'] = 'general',
+    preview: bool = False,
 ):
-    return download(export_docx(content, design_style, document_type), 'docx', 'MAGHRABI-document')
+    docx_data = export_docx(content, design_style, document_type)
+    if preview:
+        return render_word_preview(docx_data)
+    return download(docx_data, 'docx', 'MAGHRABI-document')
 
 
 @app.post('/api/v1/exports/docx/custom')
@@ -270,8 +276,9 @@ async def docx_custom_export(
     design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury',
     document_type: Literal['general', 'report', 'study', 'strategy', 'letter'] = 'general',
     logo: UploadFile | None = File(default=None),
+    preview: bool = False,
 ):
-    """One-off editable document export. User-provided logo is never persisted."""
+    """One-off editable document export or actual paginated preview; logo not persisted."""
     if len(content_json) > 200_000 or len(customization_json) > 20_000:
         raise HTTPException(413, "حجم بيانات المستند أكبر من الحد المسموح.")
     try:
@@ -289,8 +296,11 @@ async def docx_custom_export(
             raise HTTPException(422, str(exc)) from exc
         finally:
             await logo.close()
-    return download(export_docx(content, design_style, document_type, customization, logo_data),
-                    'docx', 'MAGHRABI-document')
+    docx_data = export_docx(content, design_style, document_type, customization, logo_data)
+    if preview:
+        # The multipart route is async; LibreOffice conversion must not block the event loop.
+        return await run_in_threadpool(render_word_preview, docx_data)
+    return download(docx_data, 'docx', 'MAGHRABI-document')
 
 
 @app.post('/api/v1/exports/pptx')

@@ -181,6 +181,7 @@ export default function App() {
   const [selectedDesignId, setSelectedDesignId] = useState("");
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState("");
+  const [wordPagePreview, setWordPagePreview] = useState<{url: string; fingerprint: string; pages: number} | null>(null);
   const [projects, setProjects] = useState<Project[]>(readProjects);
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [file, setFile] = useState<File | null>(null);
@@ -209,6 +210,9 @@ export default function App() {
     setLogoPreview(url);
     return () => URL.revokeObjectURL(url);
   }, [logoFile]);
+  useEffect(() => () => {
+    if (wordPagePreview?.url) URL.revokeObjectURL(wordPagePreview.url);
+  }, [wordPagePreview]);
   useEffect(() => {
     // Discard legacy plaintext credentials previously saved in sessionStorage.
     sessionStorage.removeItem("maghrabi-office-access-token-v1");
@@ -374,53 +378,84 @@ export default function App() {
     setContent({ ...content, sections });
     setSelected(0);
   }
+  // Invalidate the rendered PDF when content or any design input changes.
+  const wordPreviewFingerprint = JSON.stringify({
+    content, brand, layout, documentStyle, documentType: settings.document_type,
+    logo: logoFile && [logoFile.name, logoFile.size, logoFile.lastModified],
+  });
+
+  async function requestWord(preview: boolean): Promise<Response> {
+    if (!content) throw new Error("لا يوجد مستند للمعاينة.");
+    const suffix = preview ? "&preview=true" : "";
+    const custom = logoFile !== null ||
+      Object.values(brand).some((value) => value.trim()) ||
+      JSON.stringify(layout) !== JSON.stringify(defaultLayout);
+    if (custom) {
+      const table_rows = brand.tableTSV.trim()
+        ? brand.tableTSV.trim().split(/\r?\n/).filter((line) => line.trim()).map(
+            (line) => line.split("\t").map((cell) => cell.trim()))
+        : [];
+      if (table_rows.length > 31 || table_rows.some((row) => row.length > 6))
+        throw new Error("الجدول يدعم 6 أعمدة و30 صف بيانات بحد أقصى.");
+      const customization = {
+        organization_name: brand.organizationName.trim(),
+        header_text: brand.headerText.trim(),
+        footer_text: brand.footerText.trim(),
+        table_title: brand.tableTitle.trim(),
+        table_rows,
+        logo_alignment: layout.logoAlignment,
+        logo_placement: layout.logoPlacement,
+        header_alignment: layout.headerAlignment,
+        footer_alignment: layout.footerAlignment,
+        page_orientation: layout.pageOrientation,
+        page_margins: layout.pageMargins,
+        body_font_size: layout.bodyFontSize,
+        show_page_numbers: layout.showPageNumbers,
+      };
+      const form = new FormData();
+      form.append("content_json", JSON.stringify(content));
+      form.append("customization_json", JSON.stringify(customization));
+      if (logoFile) form.append("logo", logoFile, logoFile.name);
+      return api(
+        "/exports/docx/custom?design_style=" + documentStyle +
+        "&document_type=" + settings.document_type + suffix,
+        {method: "POST", body: form},
+      );
+    }
+    return api(
+      "/exports/docx?design_style=" + documentStyle +
+      "&document_type=" + settings.document_type + suffix,
+      jsonBody(content),
+    );
+  }
+
+  async function previewActualWordPages() {
+    if (!content) return;
+    await run("جارٍ إنشاء المعاينة الفعلية لصفحات Word…", async () => {
+      validateContent(content);
+      const fingerprint = wordPreviewFingerprint;
+      const response = await requestWord(true);
+      const blob = await response.blob();
+      if (!blob.size || !response.headers.get("content-type")?.includes("application/pdf"))
+        throw new Error("لم يرجع الخادم معاينة PDF صالحة.");
+      const url = URL.createObjectURL(blob);
+      const pages = Number(response.headers.get("X-Preview-Pages") || 0);
+      setWordPagePreview({url, pages: Number.isFinite(pages) ? pages : 0, fingerprint});
+      setView("docx");
+      setNotice("تم إنشاء معاينة فعلية لصفحات Word. راجع فواصل الصفحات قبل تنزيل DOCX.");
+    });
+  }
+
   async function exportFile(format: Format) {
     if (!content) return;
     await run("جارٍ تجهيز الملف…", async () => {
       validateContent(content);
-      const hasCustomWord = format === "docx" &&
-        (logoFile !== null || Object.values(brand).some((value) => value.trim()) ||
-         JSON.stringify(layout) !== JSON.stringify(defaultLayout));
-      let response: Response;
-      if (hasCustomWord && format === "docx") {
-        const table_rows = brand.tableTSV.trim()
-          ? brand.tableTSV.trim().split(/\r?\n/).filter((line) => line.trim()).map((line) =>
-              line.split("\t").map((cell) => cell.trim()))
-          : [];
-        if (table_rows.length > 31 || table_rows.some((row) => row.length > 6))
-          throw new Error("الجدول يدعم 6 أعمدة و30 صف بيانات بحد أقصى.");
-        const customization = {
-          organization_name: brand.organizationName.trim(),
-          header_text: brand.headerText.trim(),
-          footer_text: brand.footerText.trim(),
-          table_title: brand.tableTitle.trim(),
-          table_rows,
-          logo_alignment: layout.logoAlignment,
-          logo_placement: layout.logoPlacement,
-          header_alignment: layout.headerAlignment,
-          footer_alignment: layout.footerAlignment,
-          page_orientation: layout.pageOrientation,
-          page_margins: layout.pageMargins,
-          body_font_size: layout.bodyFontSize,
-          show_page_numbers: layout.showPageNumbers,
-        };
-        const form = new FormData();
-        form.append("content_json", JSON.stringify(content));
-        form.append("customization_json", JSON.stringify(customization));
-        if (logoFile) form.append("logo", logoFile, logoFile.name);
-        response = await api(
-          `/exports/docx/custom?design_style=${documentStyle}&document_type=${settings.document_type}`,
-          { method: "POST", body: form },
-        );
-      } else {
-        response = await api(
-          `/exports/${format}?design_style=${format === "pptx" ? presentationStyle : documentStyle}${format === "docx" ? `&document_type=${settings.document_type}` : ""}`,
-          jsonBody(content),
-        );
-      }
+      const response = format === "docx"
+        ? await requestWord(false)
+        : await api("/exports/pptx?design_style=" + presentationStyle, jsonBody(content));
       await downloadResponse(
         response,
-        `MAGHRABI-${format === "docx" ? "document" : "presentation"}.${format}`,
+        "MAGHRABI-" + (format === "docx" ? "document" : "presentation") + "." + format,
       );
       setNotice("تم تجهيز الملف وتنزيله. راجع تنسيقه النهائي في Office.");
     });
@@ -1236,6 +1271,20 @@ export default function App() {
                                 {selected + 1} / {content.sections.length}
                               </small>
                             </div>
+                          ) : wordPagePreview && wordPagePreview.fingerprint === wordPreviewFingerprint ? (
+                            <section className="word-real-preview" aria-label="المعاينة الفعلية لصفحات Word">
+                              <div className="word-real-preview-bar">
+                                <strong>معاينة الصفحات الفعلية</strong>
+                                <span>{wordPagePreview.pages ? wordPagePreview.pages + " صفحة" : "ملف PDF جاهز للمعاينة"}</span>
+                                <a href={wordPagePreview.url} target="_blank" rel="noopener noreferrer">عرض مكبّر</a>
+                              </div>
+                              <iframe
+                                title="صفحات مستند Word الفعلية"
+                                src={wordPagePreview.url + "#toolbar=1&navpanes=0&view=FitH"}
+                                className="word-preview-pdf-frame"
+                              />
+                              <p className="small muted">هذه نسخة PDF للمعاينة فقط. زر «تنزيل Word» ينزّل ملف DOCX القابل للتحرير بالإعدادات نفسها.</p>
+                            </section>
                           ) : (
                             <article
                               className={`document-preview document-preview--${documentStyle} document-preview-kind--${settings.document_type} document-preview--${layout.pageOrientation} document-preview-margins--${layout.pageMargins}`}
@@ -1267,10 +1316,17 @@ export default function App() {
                               </div>
                             </article>
                           )}
+                          <div className="word-preview-toolbar">
+                            <button type="button" className="button outline" disabled={!!busy} onClick={() => void previewActualWordPages()}>
+                              معاينة الصفحات الفعلية لملف Word
+                            </button>
+                          </div>
                           <p className="small muted">
-                            معاينة للمحتوى؛ قد تختلف فواصل الصفحات والخطوط في
-                            Office. الشرائح الطويلة تُقسّم تلقائيًا عند التصدير،
-                            وتُضاف شريحة غلاف.
+                            {view === "docx"
+                              ? (wordPagePreview && wordPagePreview.fingerprint === wordPreviewFingerprint
+                                ? "صفحات PDF محوّلة من مستند Word الحالي؛ وقد تختلف فروق طفيفة في الخطوط عن Microsoft Word."
+                                : "المعاينة النصية أعلاه تقريبية. اضغط «معاينة الصفحات الفعلية» لرؤية فواصل الصفحات والترويسات والجداول.")
+                              : "معاينة الشرائح تقريبية؛ المحتوى الطويل يُقسّم تلقائيًا عند تصدير PowerPoint."}
                           </p>
                           <div className="presentation-style-control">
                             <label htmlFor="presentation-style">
