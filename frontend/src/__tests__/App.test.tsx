@@ -132,9 +132,11 @@ describe("Office Studio workflows", () => {
     expect(screen.getByText(/خطاب إداري دون غلاف أو فهرس/)).toBeVisible();
     vi.mocked(fetch).mockResolvedValueOnce(new Response("word-bytes", { status: 200 }));
     await user.click(screen.getByRole("button", { name: "تنزيل Word" }));
-    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(
-      ([url]) => String(url).endsWith("/exports/docx?design_style=corporate&document_type=letter"),
-    )).toBe(true);
+    await waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+        String(url).endsWith("/exports/docx?design_style=corporate&document_type=letter"),
+      )).toBe(true);
+    });
   });
 
   it("restores document type when reopening a saved local project", async () => {
