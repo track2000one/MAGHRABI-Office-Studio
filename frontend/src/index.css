@@ -1971,3 +1971,31 @@ textarea::placeholder {
 @media (max-width: 580px) {
   .template-library-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
+
+
+/* Reusable Word layout editor: controls affect DOCX output, preview is approximate. */
+.word-layout-editor { margin-top: 14px; }
+.word-layout-editor .two-fields { margin-bottom: 10px; }
+.word-design-preset { margin-top: 17px; padding-top: 16px; border-top: 1px solid #d5e2e9; }
+.word-design-preset label { margin-top: 10px; }
+.word-preset-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+.word-preset-actions .button { width: auto; font-size: 12px; }
+.document-preview--landscape { max-width: none; min-height: 370px; }
+.document-preview--portrait { max-width: 720px; }
+.document-preview-margins--compact { padding: 24px 29px; }
+.document-preview-margins--standard { padding: 39px 48px; }
+.document-preview-margins--spacious { padding: 56px 66px; }
+.document-preview-heading { display: block; }
+.document-preview-logo-slot { display: flex; margin: 8px 0 12px; }
+.document-preview-logo-slot.align-start { justify-content: flex-start; }
+.document-preview-logo-slot.align-center { justify-content: center; }
+.document-preview-logo-slot.align-end { justify-content: flex-end; }
+.document-preview-line { font-size: 11px; color: #6d7c87; padding: 4px 0; border-bottom: 1px solid #e4e9ed; }
+.document-preview-footer { border-top: 1px solid #dce4e8; margin-top: 18px; padding-top: 12px; color: #76838e; font-size: 11px; }
+.document-preview .align-center { text-align: center; }
+.document-preview .align-end { text-align: end; }
+.document-preview .align-start { text-align: start; }
+@media (max-width: 580px) {
+  .word-preset-actions .button { width: 100%; }
+  .document-preview-margins--spacious { padding: 31px 24px; }
+}
