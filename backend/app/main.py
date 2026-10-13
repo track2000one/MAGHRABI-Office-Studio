@@ -9,7 +9,8 @@ from zipfile import ZipFile, BadZipFile
 
 from docx import Document
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Header, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+from .document_customization import WordCustomization, MAX_LOGO_BYTES, validate_logo_bytes
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
