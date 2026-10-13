@@ -176,16 +176,18 @@ def _header(slide, heading: str, theme: Palette, rtl: bool,
 def _overview(deck: Presentation, content: Content, theme: Palette, rtl: bool):
     if not content.summary or len(content.summary) <= 220:
         return
-    # This page means even long executive summaries are never lost or squeezed.
-    slide = _new(deck, theme.paper)
-    _header(slide, _short_label(rtl, "summary"), theme, rtl,
-            "EXECUTIVE OVERVIEW")
-    _rect(slide, .89, 2.55, 11.52, 3.74, theme.white, radius=True, stroke=theme.line)
-    _rect(slide, 12.13 if rtl else 1.06, 2.94, .07, 2.90, theme.accent)
-    size = 20 if len(content.summary) <= 380 else 17
-    _text(slide, content.summary, 1.38, 2.86, 10.47, 3.12, size,
-          theme.ink, rtl)
-    _foot(slide, theme, rtl, len(deck.slides))
+    # Paginate long summaries; never squeeze 600 characters into a small box.
+    for offset, summary_part in enumerate(_split_text(content.summary, 295)):
+        slide = _new(deck, theme.paper)
+        heading = _short_label(rtl, "summary")
+        if offset:
+            heading += f" {_short_label(rtl, 'continued')}"
+        _header(slide, heading, theme, rtl, "EXECUTIVE OVERVIEW")
+        _rect(slide, .89, 2.55, 11.52, 3.74, theme.white, radius=True, stroke=theme.line)
+        _rect(slide, 12.13 if rtl else 1.06, 2.94, .07, 2.90, theme.accent)
+        _text(slide, summary_part, 1.38, 2.86, 10.47, 3.12, 19,
+              theme.ink, rtl)
+        _foot(slide, theme, rtl, len(deck.slides))
 
 
 def _contents(deck: Presentation, content: Content, theme: Palette, rtl: bool):
