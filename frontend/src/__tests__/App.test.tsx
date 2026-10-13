@@ -76,7 +76,7 @@ describe("Office Studio workflows", () => {
     await waitFor(() => expect(create).toHaveBeenCalled());
     const call = vi
       .mocked(fetch)
-      .mock.calls.find(([url]) => String(url).endsWith("/exports/docx"))!;
+      .mock.calls.find(([url]) => String(url).includes("/exports/docx?design_style="))!;
     expect(JSON.parse(call[1]!.body as string).title).toBe("عنوان محدث");
     expect(call[1]?.headers).not.toHaveProperty("OPENAI_API_KEY");
   });
@@ -97,7 +97,26 @@ describe("Office Studio workflows", () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response("docx-bytes", { status: 200 }));
     await user.click(screen.getByRole("button", { name: "تنزيل Word" }));
     await waitFor(() => {
-      expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/exports/docx"))).toBe(true);
+      expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/exports/docx?design_style="))).toBe(true);
+    });
+  });
+
+  it("exports a selected luxury Word document theme with native editable DOCX endpoint", async () => {
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:word-theme");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await user.selectOptions(screen.getByLabelText("طابع تصميم Word"), "corporate");
+    expect(document.querySelector(".document-preview--corporate")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "معاينة Word" }));
+    expect(document.querySelector(".document-preview--corporate")).toBeTruthy();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("word-bytes", { status: 200 }));
+    await user.click(screen.getByRole("button", { name: "تنزيل Word" }));
+    await waitFor(() => {
+      expect(
+        vi.mocked(fetch).mock.calls.some(([url]) =>
+          String(url).includes("/exports/docx?design_style=corporate"))
+      ).toBe(true);
     });
   });
 
