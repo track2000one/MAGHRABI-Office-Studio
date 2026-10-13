@@ -18,23 +18,33 @@ export type RequestSettings = {
 };
 const base = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 
-export async function api(path: string, init: RequestInit = {}, token = "") {
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+export async function api(path: string, init: RequestInit = {}) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 120_000);
   try {
     const headers = new Headers(init.headers);
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (path.startsWith("/ai/") && init.method?.toUpperCase() === "POST")
+      headers.set("X-Maghrabi-Client", "studio");
     const response = await fetch(`${base}/api/v1${path}`, {
       ...init,
       headers,
+      credentials: "same-origin",
       signal: controller.signal,
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      throw new Error(
+      throw new ApiError(
         typeof payload.detail === "string"
           ? payload.detail
           : "تحقق من الحقول: العناوين والنصوص مطلوبة، وعدد المحاور بين ١ و٢٠، وطول الفقرة حتى ٢٠٠٠ حرف.",
+        response.status,
       );
     }
     return response;
