@@ -401,7 +401,7 @@ export default function App() {
         </nav>
         <div className="sidebar-footer">
           <span
-            className={`connection-dot ${status === "ready" && authorized ? "connected" : ""}`}
+            className={`connection-dot ${status === "ready" && authorized && aiVerified ? "connected" : ""}`}
           />
           <strong>{aiLabel}</strong>
           <p>محتواك، بتنسيق يليق به.</p>
