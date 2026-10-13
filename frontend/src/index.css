@@ -1949,3 +1949,25 @@ textarea::placeholder {
   border: 0;
   padding-bottom: 0;
 }
+
+
+/* Editable Word gallery and organization branding */
+.template-library-heading { font-size: 15px; margin: 0 0 12px; color: #17344b; }
+.template-library-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 9px; margin-bottom: 16px; }
+.template-library-choice { display: grid; gap: 8px; text-align: center; border: 1px solid #d5e1e8; border-radius: 11px; padding: 12px 8px; background: #fff; color: #234156; cursor: pointer; font-size: 11px; }
+.template-library-choice.selected { border-color: #12959a; box-shadow: 0 0 0 2px rgba(18,149,154,.16); background: #f0f9f8; }
+.template-library-choice:focus-visible { outline: 3px solid #158b97; outline-offset: 2px; }
+.template-library-visual { display: flex; flex-direction: column; justify-content: center; gap: 5px; align-items: center; height: 56px; width: 44px; margin: auto; border: 1px solid #d6e0e7; border-top: 4px solid #b28b50; border-radius: 3px; background: linear-gradient(#fff,#f7f8f9); box-shadow: 0 3px 8px rgba(15,40,55,.08); }
+.template-library-visual span { display:block; height:3px; width:26px; border-radius:2px; background:#d9e2e8; }
+.template-library-visual span:first-child { width:20px; height:5px; margin-bottom:4px; background:#264b65; }
+.template-library-choice.selected .template-library-visual { border-top-color: #118d91; }
+.document-brand-control { margin-top: 12px; }
+.document-brand-control input[type=file] { width:100%; font-size:12px; background:#fff; padding: 9px; }
+.document-brand-control .text-button { display:block; text-align:start; margin-top: 6px; font-size: 11px; }
+.document-brand-control .two-fields { margin-bottom: 10px; }
+.document-brand-control textarea { resize: vertical; min-height: 92px; }
+.document-preview-heading { display:flex; align-items:center; gap: 12px; color:#24445a; font-size: 12px; margin-bottom:10px; }
+.document-logo-preview { max-width: 105px; max-height: 68px; width: auto; height: auto; object-fit:contain; }
+@media (max-width: 580px) {
+  .template-library-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}

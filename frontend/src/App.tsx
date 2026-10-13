@@ -11,7 +11,17 @@ type Analysis = {
   metrics: Record<string, unknown>;
   analysis_note: string;
 };
-type Project = { id: string; date: string; content: Content; context?: Pick<RequestSettings, "source_mode" | "reference_text" | "document_type"> };
+type BrandFields = {
+  organizationName: string;
+  headerText: string;
+  footerText: string;
+  tableTitle: string;
+  tableTSV: string;
+};
+const emptyBrandFields: BrandFields = {
+  organizationName: "", headerText: "", footerText: "", tableTitle: "", tableTSV: "",
+};
+type Project = { id: string; date: string; content: Content; context?: Pick<RequestSettings, "source_mode" | "reference_text" | "document_type"> & { branding?: BrandFields } };
 const STORAGE = "maghrabi-office-projects-v1";
 const documentTypeLabels: Record<DocumentType, string> = {
   general: "مستند عام",
@@ -123,6 +133,9 @@ export default function App() {
   const [view, setView] = useState<Format>("pptx");
   const [presentationStyle, setPresentationStyle] = useState<"luxury" | "corporate" | "minimal">("luxury");
   const [documentStyle, setDocumentStyle] = useState<"luxury" | "corporate" | "minimal">("luxury");
+  const [brand, setBrand] = useState<BrandFields>(emptyBrandFields);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState("");
   const [projects, setProjects] = useState<Project[]>(readProjects);
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [file, setFile] = useState<File | null>(null);
@@ -142,6 +155,15 @@ export default function App() {
       setAiVerified(false);
     }
   }
+  useEffect(() => {
+    if (!logoFile) {
+      setLogoPreview("");
+      return;
+    }
+    const url = URL.createObjectURL(logoFile);
+    setLogoPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [logoFile]);
   useEffect(() => {
     // Discard legacy plaintext credentials previously saved in sessionStorage.
     sessionStorage.removeItem("maghrabi-office-access-token-v1");
@@ -311,11 +333,39 @@ export default function App() {
     if (!content) return;
     await run("جارٍ تجهيز الملف…", async () => {
       validateContent(content);
-      await downloadResponse(
-        await api(
+      const hasCustomWord = format === "docx" &&
+        (logoFile !== null || Object.values(brand).some((value) => value.trim()));
+      let response: Response;
+      if (hasCustomWord && format === "docx") {
+        const table_rows = brand.tableTSV.trim()
+          ? brand.tableTSV.trim().split(/\r?\n/).filter((line) => line.trim()).map((line) =>
+              line.split("\t").map((cell) => cell.trim()))
+          : [];
+        if (table_rows.length > 31 || table_rows.some((row) => row.length > 6))
+          throw new Error("الجدول يدعم 6 أعمدة و30 صف بيانات بحد أقصى.");
+        const customization = {
+          organization_name: brand.organizationName.trim(),
+          header_text: brand.headerText.trim(),
+          footer_text: brand.footerText.trim(),
+          table_title: brand.tableTitle.trim(),
+          table_rows,
+        };
+        const form = new FormData();
+        form.append("content_json", JSON.stringify(content));
+        form.append("customization_json", JSON.stringify(customization));
+        if (logoFile) form.append("logo", logoFile, logoFile.name);
+        response = await api(
+          `/exports/docx/custom?design_style=${documentStyle}&document_type=${settings.document_type}`,
+          { method: "POST", body: form },
+        );
+      } else {
+        response = await api(
           `/exports/${format}?design_style=${format === "pptx" ? presentationStyle : documentStyle}${format === "docx" ? `&document_type=${settings.document_type}` : ""}`,
           jsonBody(content),
-        ),
+        );
+      }
+      await downloadResponse(
+        response,
         `MAGHRABI-${format === "docx" ? "document" : "presentation"}.${format}`,
       );
       setNotice("تم تجهيز الملف وتنزيله. راجع تنسيقه النهائي في Office.");
@@ -327,7 +377,7 @@ export default function App() {
       validateContent(content);
       if (projects.length >= 15) throw new Error("بلغت الحد الأقصى وهو 15 نسخة. احذف نسخة محفوظة قبل إضافة نسخة جديدة.");
       const next = [
-        { id: crypto.randomUUID(), date: new Date().toISOString(), content, context: {source_mode: settings.source_mode, reference_text: settings.reference_text, document_type: settings.document_type} },
+        { id: crypto.randomUUID(), date: new Date().toISOString(), content, context: {source_mode: settings.source_mode, reference_text: settings.reference_text, document_type: settings.document_type, branding: { ...brand }} },
         ...projects,
       ];
       localStorage.setItem(STORAGE, JSON.stringify(next));
@@ -1086,6 +1136,10 @@ export default function App() {
                               className={`document-preview document-preview--${documentStyle} document-preview-kind--${settings.document_type}`}
                               dir={content.language === "ar" ? "rtl" : "ltr"}
                             >
+                              <div className="document-preview-heading">
+                                {logoPreview && <img src={logoPreview} alt="الشعار المضاف للمستند" className="document-logo-preview" />}
+                                {brand.organizationName && <strong>{brand.organizationName}</strong>}
+                              </div>
                               <span className="document-kind-label">{documentTypeLabels[settings.document_type]}</span>
                               <h2>{content.title}</h2>
                               <p className="muted">{content.summary}</p>
@@ -1122,6 +1176,24 @@ export default function App() {
                             </p>
                           </div>
                           <div className="presentation-style-control word-style-control">
+                            <h3 className="template-library-heading">مكتبة قوالب Word الجاهزة</h3>
+                            <div className="template-library-grid" aria-label="مكتبة قوالب Word">
+                              {(Object.entries(documentTypeLabels) as [DocumentType, string][]).map(([kind, label]) => (
+                                <button
+                                  type="button"
+                                  key={kind}
+                                  className={`template-library-choice${kind === settings.document_type ? " selected" : ""}`}
+                                  aria-pressed={kind === settings.document_type}
+                                  onClick={() => setSettings({ ...settings, document_type: kind })}
+                                  disabled={!!busy}
+                                >
+                                  <span className="template-library-visual" aria-hidden="true">
+                                    <span /><span /><span />
+                                  </span>
+                                  <strong>{label}</strong>
+                                </button>
+                              ))}
+                            </div>
                             <label htmlFor="document-type">
                               نوع مستند Word
                               <select
@@ -1154,6 +1226,89 @@ export default function App() {
                               {settings.document_type === "letter"
                                 ? "خطاب قابل للتحرير دون بيانات رسمية مفترضة. أدخل اسم الجهة والأرقام والتواريخ والتوقيع في المحتوى حسب الحاجة."
                                 : "مستند قابل للتحرير بغلاف وفهرس وملخص ومحاور مرتبة. تُستخدم بياناتك فقط، دون نتائج أو أرقام مختلقة."}
+                            </p>
+                          </div>
+                          <div className="presentation-style-control document-brand-control">
+                            <h3 className="template-library-heading">تخصيص الهوية والجداول</h3>
+                            <div className="two-fields">
+                              <label>
+                                اسم الجهة (اختياري)
+                                <input
+                                  maxLength={150}
+                                  value={brand.organizationName}
+                                  onChange={(e) => setBrand({ ...brand, organizationName: e.target.value })}
+                                  placeholder="اسم الجهة كما تريد ظهوره"
+                                />
+                              </label>
+                              <label>
+                                شعار الجهة (PNG أو JPG)
+                                <input
+                                  aria-label="شعار الجهة (PNG أو JPG)"
+                                  type="file"
+                                  accept="image/png,image/jpeg"
+                                  onChange={(e) => {
+                                    const chosen = e.target.files?.[0];
+                                    if (!chosen) return;
+                                    if (!["image/png", "image/jpeg"].includes(chosen.type) || chosen.size > 1024 * 1024) {
+                                      setError("اختر شعار PNG أو JPG بحجم لا يتجاوز 1 ميجابايت.");
+                                      setLogoFile(null);
+                                    } else {
+                                      setLogoFile(chosen);
+                                      setError("");
+                                    }
+                                    e.target.value = "";
+                                  }}
+                                />
+                                {logoFile && (
+                                  <button type="button" className="text-button" onClick={() => setLogoFile(null)}>
+                                    إزالة الشعار: {logoFile.name}
+                                  </button>
+                                )}
+                              </label>
+                            </div>
+                            <div className="two-fields">
+                              <label>
+                                نص الترويسة (اختياري)
+                                <input
+                                  maxLength={160}
+                                  value={brand.headerText}
+                                  onChange={(e) => setBrand({ ...brand, headerText: e.target.value })}
+                                  placeholder="مثال: الإدارة العامة..."
+                                />
+                              </label>
+                              <label>
+                                نص التذييل (اختياري)
+                                <input
+                                  maxLength={160}
+                                  value={brand.footerText}
+                                  onChange={(e) => setBrand({ ...brand, footerText: e.target.value })}
+                                  placeholder="مثال: للاستخدام الداخلي"
+                                />
+                              </label>
+                            </div>
+                            <label>
+                              عنوان الجدول (اختياري)
+                              <input
+                                maxLength={160}
+                                value={brand.tableTitle}
+                                onChange={(e) => setBrand({ ...brand, tableTitle: e.target.value })}
+                                placeholder="مثال: خطة التنفيذ"
+                              />
+                            </label>
+                            <label>
+                              بيانات جدول من Excel (اختياري)
+                              <textarea
+                                rows={4}
+                                maxLength={18000}
+                                value={brand.tableTSV}
+                                onChange={(e) => setBrand({ ...brand, tableTSV: e.target.value })}
+                                placeholder={"البند\\tالمسؤول\\tالحالة\nالخطوة الأولى\\tالفريق المختص\\tقيد التنفيذ"}
+                              />
+                            </label>
+                            <p className="muted small">
+                              انسخ الجدول من Excel والصقه هنا (أعمدة مفصولة بـ Tab). الصف الأول للعناوين،
+                              بحد أقصى 6 أعمدة و30 صفًا. يبقى الجدول قابلًا للتحرير في Word.
+                              لا يُحفظ ملف الشعار على الخادم ولا ضمن المشاريع المحلية.
                             </p>
                           </div>
                           <div className="export-row">
@@ -1359,6 +1514,9 @@ export default function App() {
                         onClick={() => {
                           setContent(p.content);
                           setSettings({...initial, topic: p.content.title, language: p.content.language, source_mode: p.context?.source_mode === "reference" ? "reference" : "general", reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : "", document_type: p.context?.document_type && Object.keys(documentTypeLabels).includes(p.context.document_type) ? p.context.document_type : "general" });
+                          setBrand(p.context?.branding && typeof p.context.branding === "object"
+                            ? { ...emptyBrandFields, ...p.context.branding } : emptyBrandFields);
+                          setLogoFile(null);
                           setPrevious(null);
                           setStage("edit");
                           setSelected(0);

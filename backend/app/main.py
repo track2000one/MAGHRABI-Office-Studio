@@ -9,7 +9,8 @@ from zipfile import ZipFile, BadZipFile
 
 from docx import Document
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Header, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+from .document_customization import WordCustomization, MAX_LOGO_BYTES, validate_logo_bytes
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -260,6 +261,36 @@ def docx_export(
     document_type: Literal['general', 'report', 'study', 'strategy', 'letter'] = 'general',
 ):
     return download(export_docx(content, design_style, document_type), 'docx', 'MAGHRABI-document')
+
+
+@app.post('/api/v1/exports/docx/custom')
+async def docx_custom_export(
+    content_json: str = Form(...),
+    customization_json: str = Form(default="{}"),
+    design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury',
+    document_type: Literal['general', 'report', 'study', 'strategy', 'letter'] = 'general',
+    logo: UploadFile | None = File(default=None),
+):
+    """One-off editable document export. User-provided logo is never persisted."""
+    if len(content_json) > 200_000 or len(customization_json) > 20_000:
+        raise HTTPException(413, "حجم بيانات المستند أكبر من الحد المسموح.")
+    try:
+        content = Content.model_validate_json(content_json)
+        customization = WordCustomization.model_validate_json(customization_json)
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(422, "تحقق من بيانات المستند وتناسق أعمدة الجدول.") from exc
+    logo_data = None
+    if logo is not None:
+        # Never trust file extension or content-type; inspect actual pixel data.
+        logo_data = await logo.read(MAX_LOGO_BYTES + 1)
+        try:
+            logo_data = validate_logo_bytes(logo_data)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        finally:
+            await logo.close()
+    return download(export_docx(content, design_style, document_type, customization, logo_data),
+                    'docx', 'MAGHRABI-document')
 
 
 @app.post('/api/v1/exports/pptx')
