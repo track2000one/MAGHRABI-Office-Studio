@@ -30,10 +30,11 @@ def paragraph_style(paragraph, rtl=True):
             fonts.set(qn('w:cs'), 'Arial')
 
 
-def export_docx(content: Content, design_style: str = "luxury") -> bytes:
-    """Premium fully editable DOCX output; retain legacy function/API entrypoint."""
+def export_docx(content: Content, design_style: str = "luxury",
+                document_type: str = "general") -> bytes:
+    """Premium fully editable DOCX output, optionally with specialized document layout."""
     from .word_design import export_premium_docx
-    return export_premium_docx(content, design_style)
+    return export_premium_docx(content, design_style, document_type)
 
 
 def format_docx(data: bytes) -> bytes:

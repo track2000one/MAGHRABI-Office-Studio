@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, downloadResponse, example, jsonBody } from "./api";
-import type { Content, Format, RequestSettings, Section } from "./api";
+import type { Content, DocumentType, Format, RequestSettings, Section } from "./api";
 import PdfStudio from "./PdfStudio";
 
 type Page = "home" | "create" | "files" | "pdf" | "projects" | "settings";
@@ -11,14 +11,29 @@ type Analysis = {
   metrics: Record<string, unknown>;
   analysis_note: string;
 };
-type Project = { id: string; date: string; content: Content; context?: Pick<RequestSettings, "source_mode" | "reference_text"> };
+type Project = { id: string; date: string; content: Content; context?: Pick<RequestSettings, "source_mode" | "reference_text" | "document_type"> };
 const STORAGE = "maghrabi-office-projects-v1";
+const documentTypeLabels: Record<DocumentType, string> = {
+  general: "مستند عام",
+  report: "تقرير رسمي",
+  study: "دراسة تفصيلية",
+  strategy: "خطة استراتيجية",
+  letter: "خطاب إداري",
+};
+const documentTypeHelp: Record<DocumentType, string> = {
+  general: "غلاف وفهرس وملخص تنفيذي وتنسيق مناسب لمختلف الموضوعات.",
+  report: "تقرير منظم بغلاف وفهرس وملخص وأقسام مرقمة لعرض الملاحظات والنتائج.",
+  study: "دراسة بغلاف وفهرس وملخص وخارطة محاور؛ تُكتب المنهجية والنتائج إذا زودت بها.",
+  strategy: "خطة ذات غلاف وفهرس وملخص وجدول محاور؛ دون اختلاق أهداف أو مؤشرات.",
+  letter: "خطاب إداري دون غلاف أو فهرس، ويحتاج بيانات الجهة والتاريخ والتوقيع من المستخدم.",
+};
 const initial: RequestSettings = {
   topic: "",
   audience: "فريق العمل والإدارة",
   language: "ar",
   tone: "formal",
   format: "pptx",
+  document_type: "general",
   section_count: 6,
   reference_text: "",
   source_mode: "general",
@@ -297,7 +312,10 @@ export default function App() {
     await run("جارٍ تجهيز الملف…", async () => {
       validateContent(content);
       await downloadResponse(
-        await api(`/exports/${format}?design_style=${format === "pptx" ? presentationStyle : documentStyle}`, jsonBody(content)),
+        await api(
+          `/exports/${format}?design_style=${format === "pptx" ? presentationStyle : documentStyle}${format === "docx" ? `&document_type=${settings.document_type}` : ""}`,
+          jsonBody(content),
+        ),
         `MAGHRABI-${format === "docx" ? "document" : "presentation"}.${format}`,
       );
       setNotice("تم تجهيز الملف وتنزيله. راجع تنسيقه النهائي في Office.");
@@ -309,7 +327,7 @@ export default function App() {
       validateContent(content);
       if (projects.length >= 15) throw new Error("بلغت الحد الأقصى وهو 15 نسخة. احذف نسخة محفوظة قبل إضافة نسخة جديدة.");
       const next = [
-        { id: crypto.randomUUID(), date: new Date().toISOString(), content, context: {source_mode: settings.source_mode, reference_text: settings.reference_text} },
+        { id: crypto.randomUUID(), date: new Date().toISOString(), content, context: {source_mode: settings.source_mode, reference_text: settings.reference_text, document_type: settings.document_type} },
         ...projects,
       ];
       localStorage.setItem(STORAGE, JSON.stringify(next));
@@ -623,7 +641,7 @@ export default function App() {
                             })
                           }
                         >
-                          {[3, 4, 6, 8, 10, 12].map((n) => (
+                          {[2, 3, 4, 6, 8, 10, 12].map((n) => (
                             <option key={n} value={n}>
                               {n} محاور
                             </option>
@@ -631,6 +649,28 @@ export default function App() {
                         </select>
                       </label>
                     </div>
+                    {settings.format === "docx" && (
+                      <label>
+                        نوع مستند Word
+                        <select
+                          aria-label="نوع مستند Word"
+                          value={settings.document_type}
+                          onChange={(e) => {
+                            const document_type = e.target.value as DocumentType;
+                            setSettings({
+                              ...settings,
+                              document_type,
+                              section_count: document_type === "letter" ? 2 : settings.section_count,
+                            });
+                          }}
+                        >
+                          {Object.entries(documentTypeLabels).map(([value, label]) => (
+                            <option value={value} key={value}>{label}</option>
+                          ))}
+                        </select>
+                        <small className="muted">{documentTypeHelp[settings.document_type]}</small>
+                      </label>
+                    )}
                     <label>
                       الجمهور المستهدف
                       <input
@@ -755,7 +795,7 @@ export default function App() {
                     disabled={!!busy}
                     onClick={() => {
                       setContent(structuredClone(example));
-                      setSettings({...initial, format: settings.format});
+                      setSettings({...initial, format: settings.format, document_type: settings.document_type});
                       setPrevious(null);
                       setStage("edit");
                       setSelected(0);
@@ -1043,9 +1083,10 @@ export default function App() {
                             </div>
                           ) : (
                             <article
-                              className={`document-preview document-preview--${documentStyle}`}
+                              className={`document-preview document-preview--${documentStyle} document-preview-kind--${settings.document_type}`}
                               dir={content.language === "ar" ? "rtl" : "ltr"}
                             >
+                              <span className="document-kind-label">{documentTypeLabels[settings.document_type]}</span>
                               <h2>{content.title}</h2>
                               <p className="muted">{content.summary}</p>
                               {content.sections.map((s, i) => (
@@ -1081,6 +1122,22 @@ export default function App() {
                             </p>
                           </div>
                           <div className="presentation-style-control word-style-control">
+                            <label htmlFor="document-type">
+                              نوع مستند Word
+                              <select
+                                id="document-type"
+                                value={settings.document_type}
+                                onChange={(e) => setSettings({
+                                  ...settings,
+                                  document_type: e.target.value as DocumentType,
+                                })}
+                              >
+                                {Object.entries(documentTypeLabels).map(([value, label]) => (
+                                  <option value={value} key={value}>{label}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <p className="muted small">{documentTypeHelp[settings.document_type]}</p>
                             <label htmlFor="document-style">
                               طابع تصميم Word
                               <select
@@ -1094,7 +1151,9 @@ export default function App() {
                               </select>
                             </label>
                             <p className="muted small">
-                              ملف Word احترافي قابل للتحرير: صفحة غلاف، فهرس قابل للنقر، ملخص تنفيذي، عناوين منظمة وترويسات وتذييلات مع ترقيم الصفحات.
+                              {settings.document_type === "letter"
+                                ? "خطاب قابل للتحرير دون بيانات رسمية مفترضة. أدخل اسم الجهة والأرقام والتواريخ والتوقيع في المحتوى حسب الحاجة."
+                                : "مستند قابل للتحرير بغلاف وفهرس وملخص ومحاور مرتبة. تُستخدم بياناتك فقط، دون نتائج أو أرقام مختلقة."}
                             </p>
                           </div>
                           <div className="export-row">
@@ -1299,7 +1358,7 @@ export default function App() {
                         className="button outline"
                         onClick={() => {
                           setContent(p.content);
-                          setSettings({...initial, topic: p.content.title, language: p.content.language, source_mode: p.context?.source_mode === "reference" ? "reference" : "general", reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : ""});
+                          setSettings({...initial, topic: p.content.title, language: p.content.language, source_mode: p.context?.source_mode === "reference" ? "reference" : "general", reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : "", document_type: p.context?.document_type && Object.keys(documentTypeLabels).includes(p.context.document_type) ? p.context.document_type : "general" });
                           setPrevious(null);
                           setStage("edit");
                           setSelected(0);

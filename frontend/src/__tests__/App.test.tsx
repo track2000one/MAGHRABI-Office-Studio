@@ -120,6 +120,60 @@ describe("Office Studio workflows", () => {
     });
   });
 
+  it("lets users choose a specialized letter and exports through the letter DOCX template", async () => {
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:official-letter");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await user.selectOptions(screen.getByLabelText("نوع مستند Word"), "letter");
+    await user.selectOptions(screen.getByLabelText("طابع تصميم Word"), "corporate");
+    await user.click(screen.getByRole("button", { name: "معاينة Word" }));
+    expect(document.querySelector(".document-preview-kind--letter")).toBeTruthy();
+    expect(screen.getByText(/خطاب إداري دون غلاف أو فهرس/)).toBeVisible();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("word-bytes", { status: 200 }));
+    await user.click(screen.getByRole("button", { name: "تنزيل Word" }));
+    await waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+        String(url).endsWith("/exports/docx?design_style=corporate&document_type=letter"),
+      )).toBe(true);
+    });
+  });
+
+  it("restores document type when reopening a saved local project", async () => {
+    const user = await openExample();
+    await user.selectOptions(screen.getByLabelText("نوع مستند Word"), "study");
+    await user.click(screen.getByRole("button", { name: "حفظ نسخة" }));
+    await user.click(screen.getByRole("button", { name: /مشاريعي/ }));
+    await user.click(screen.getByRole("button", { name: "فتح وتحرير" }));
+    expect(screen.getByLabelText("نوع مستند Word")).toHaveValue("study");
+  });
+
+  it("includes Word document type in AI outline request without changing PPTX schema", async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ configured: true, authenticated: true })),
+    );
+    render(<App />);
+    await screen.findByText("إعدادات الذكاء الاصطناعي مكتملة · لم يُختبر التوليد");
+    await user.click(screen.getByRole("button", { name: /إنشاء بالذكاء الاصطناعي/ }));
+    await user.selectOptions(screen.getByLabelText("نوع المخرج"), "docx");
+    await user.selectOptions(screen.getByLabelText("نوع مستند Word"), "letter");
+    expect(screen.getByLabelText("عدد المحاور")).toHaveValue("2");
+    await user.type(screen.getByLabelText("الموضوع", { exact: true }), "إعداد خطاب بشأن خدمات الجامعة");
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify(example)),
+    );
+    await user.click(screen.getByRole("button", { name: /اقترح مخطط المحتوى/ }));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+      String(url).endsWith("/ai/generate"))).toBe(true));
+    const generate = vi.mocked(fetch).mock.calls.find(([url]) =>
+      String(url).endsWith("/ai/generate"))!;
+    const request = JSON.parse(generate[1]!.body as string);
+    expect(request.document_type).toBe("letter");
+    expect(request.section_count).toBe(2);
+    expect(request.format).toBe("docx");
+  });
+
   it("uploads the actual file to analysis and renders returned metrics", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);

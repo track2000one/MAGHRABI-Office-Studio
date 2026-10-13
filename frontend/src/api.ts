@@ -6,12 +6,14 @@ export type Content = {
   sections: Section[];
 };
 export type Format = "docx" | "pptx";
+export type DocumentType = "general" | "report" | "study" | "strategy" | "letter";
 export type RequestSettings = {
   topic: string;
   audience: string;
   language: "ar" | "en";
   tone: "formal" | "educational" | "concise";
   format: Format;
+  document_type: DocumentType;
   section_count: number;
   reference_text: string;
   source_mode: "general" | "reference";
