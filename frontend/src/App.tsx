@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, downloadResponse, example, jsonBody } from "./api";
+import { api, ApiError, downloadResponse, example, jsonBody } from "./api";
 import type { Content, Format, RequestSettings, Section } from "./api";
 import PdfStudio from "./PdfStudio";
 
@@ -13,7 +13,6 @@ type Analysis = {
 };
 type Project = { id: string; date: string; content: Content; context?: Pick<RequestSettings, "source_mode" | "reference_text"> };
 const STORAGE = "maghrabi-office-projects-v1";
-const ACCESS_TOKEN_SESSION = "maghrabi-office-access-token-v1";
 const initial: RequestSettings = {
   topic: "",
   audience: "فريق العمل والإدارة",
@@ -98,7 +97,8 @@ export default function App() {
   const [status, setStatus] = useState<
     "loading" | "ready" | "unconfigured" | "offline"
   >("loading");
-  const [token, setToken] = useState(() => sessionStorage.getItem(ACCESS_TOKEN_SESSION) || "");
+  const [token, setToken] = useState("");
+  const [authorized, setAuthorized] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -116,8 +116,10 @@ export default function App() {
     try {
       const data = await (await api("/ai/status")).json();
       setStatus(data.configured ? "ready" : "unconfigured");
+      setAuthorized(data.authenticated === true);
     } catch {
       setStatus("offline");
+      setAuthorized(false);
     }
   }
   useEffect(() => {
@@ -131,10 +133,30 @@ export default function App() {
     try {
       await fn();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        setAuthorized(false);
+        setPage("settings");
+      }
       setError(e instanceof Error ? e.message : "تعذر إكمال العملية.");
     } finally {
       setBusy("");
     }
+  }
+  async function signIn() {
+    await run("جارٍ التحقق من رمز الوصول…", async () => {
+      if (!token.trim()) throw new Error("أدخل رمز الوصول للمنصة.");
+      await api("/ai/login", jsonBody({ access_token: token.trim() }));
+      setToken("");
+      setAuthorized(true);
+      setNotice("تم تسجيل الدخول بنجاح. يمكنك استخدام الذكاء الاصطناعي لمدة 7 أيام على هذا المتصفح.");
+    });
+  }
+  async function signOut() {
+    await run("جارٍ تسجيل الخروج…", async () => {
+      await api("/ai/logout", { method: "POST" });
+      setAuthorized(false);
+      setNotice("تم تسجيل الخروج من خدمة الذكاء الاصطناعي.");
+    });
   }
   function changePage(next: Page) {
     if (!busy) {
@@ -174,9 +196,9 @@ export default function App() {
           throw new Error(
             "خدمة الذكاء الاصطناعي غير متاحة الآن. استخدم التحرير اليدوي أو المثال التوضيحي.",
           );
-        if (!token.trim()) {
+        if (!authorized) {
           setPage("settings");
-          throw new Error("أدخل رمز الوصول لتفعيل طلبات الذكاء الاصطناعي.");
+          throw new Error("يرجى تسجيل الدخول من إعدادات الاتصال لاستخدام الذكاء الاصطناعي.");
         }
         const outline =
           phase === "draft"
@@ -196,7 +218,6 @@ export default function App() {
               outline,
               approved_title: phase === "draft" ? (content?.title ?? "") : "",
             }),
-            token,
           )
         ).json();
         setPrevious(content);
@@ -213,6 +234,10 @@ export default function App() {
       if (instruction.trim().length < 5)
         throw new Error("اكتب التعديل المطلوب بوضوح.");
       validateContent(content);
+      if (!authorized) {
+        setPage("settings");
+        throw new Error("يرجى تسجيل الدخول لتفعيل التعديل بالذكاء الاصطناعي.");
+      }
       const result: Content = await (
         await api(
           "/ai/revise",
@@ -222,7 +247,6 @@ export default function App() {
             reference_text: settings.reference_text,
             source_mode: settings.source_mode,
           }),
-          token,
         )
       ).json();
       setPrevious(content);
@@ -314,12 +338,13 @@ export default function App() {
     });
   }
   const section = content?.sections[selected];
-  const aiLabel = {
-    ready: "الذكاء الاصطناعي متصل",
-    unconfigured: "بانتظار إعداد الذكاء الاصطناعي",
-    offline: "الخادم غير متصل",
-    loading: "جارٍ فحص الاتصال",
-  }[status];
+  const aiLabel = status === "ready"
+    ? (authorized ? "الذكاء الاصطناعي جاهز للاستخدام" : "الخدمة متصلة · يلزم تسجيل الدخول")
+    : {
+        unconfigured: "بانتظار إعداد الذكاء الاصطناعي",
+        offline: "الخادم غير متصل",
+        loading: "جارٍ فحص الاتصال",
+      }[status];
 
   return (
     <div className="studio-shell" dir="rtl">
@@ -363,7 +388,7 @@ export default function App() {
         </nav>
         <div className="sidebar-footer">
           <span
-            className={`connection-dot ${status === "ready" ? "connected" : ""}`}
+            className={`connection-dot ${status === "ready" && authorized ? "connected" : ""}`}
           />
           <strong>{aiLabel}</strong>
           <p>محتواك، بتنسيق يليق به.</p>
@@ -494,6 +519,15 @@ export default function App() {
               <i>←</i>
               <b>٣ · التحرير والتصدير</b>
             </section>
+            {status === "ready" && !authorized && (
+              <div className="soft-note">
+                خدمة الذكاء الاصطناعي متصلة. سجّل الدخول مرة واحدة للبدء باستخدام التوليد والتعديل.
+                {" "}
+                <button className="text-button" onClick={() => changePage("settings")}>
+                  تسجيل الدخول ←
+                </button>
+              </div>
+            )}
             {status !== "ready" && (
               <div className="soft-note">
                 يمكنك تجربة المحرر والتصدير الآن باستخدام مثال توضيحي أو محتوى
@@ -1284,38 +1318,66 @@ export default function App() {
         {page === "settings" && (
           <div className="panel settings-panel">
             <h2>حالة الخدمة</h2>
-            <div className="soft-note">{aiLabel}</div>
+            <div className="soft-note">
+              {status === "ready" ? "مزود الذكاء الاصطناعي متصل بالخادم" : aiLabel}
+            </div>
+            <p className="muted">
+              حالة صلاحية الاستخدام: <strong>{authorized ? "مسجل الدخول" : "غير مسجل الدخول"}</strong>
+            </p>
             <button
               className="button outline"
+              disabled={!!busy}
               onClick={() => void checkStatus()}
             >
               إعادة فحص الاتصال
             </button>
             <hr />
-            <label>
-              رمز الوصول للمنصة
-              <input
-                type="password"
-                autoComplete="off"
-                value={token}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setToken(next);
-                  if (next) sessionStorage.setItem(ACCESS_TOKEN_SESSION, next);
-                  else sessionStorage.removeItem(ACCESS_TOKEN_SESSION);
-                }}
-                placeholder="رمز الوصول الذي حدده مسؤول المنصة"
-              />
-            </label>
-            <p className="muted">
-              يبقى الرمز لهذه علامة التبويب ويستمر بعد تحديث الصفحة، ويُمسح عند إغلاق علامة التبويب.
-            </p>
+            {authorized ? (
+              <>
+                <div className="soft-note">يمكنك الآن إنشاء المحتوى وتعديله بالذكاء الاصطناعي.</div>
+                <p className="muted small">
+                  جلسة الاستخدام صالحة لمدة تصل إلى 7 أيام منذ تسجيل الدخول. يمكنك إنهاؤها في أي وقت.
+                </p>
+                <button
+                  className="button outline"
+                  disabled={!!busy}
+                  onClick={() => void signOut()}
+                >
+                  تسجيل الخروج
+                </button>
+              </>
+            ) : (
+              <>
+                <label>
+                  رمز الوصول للمنصة
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    placeholder="رمز الوصول الذي حدده مسؤول المنصة"
+                  />
+                </label>
+                <p className="muted">
+                  سجّل الدخول مرة واحدة؛ سيتذكر الخادم الجلسة على هذا المتصفح لمدة تصل إلى 7 أيام.
+                  لا يُحفظ رمز الوصول في التخزين المحلي للمتصفح.
+                </p>
+                <button
+                  className="button primary"
+                  disabled={!!busy || status !== "ready" || !token.trim()}
+                  onClick={() => void signIn()}
+                >
+                  تسجيل الدخول وتفعيل الذكاء الاصطناعي
+                </button>
+              </>
+            )}
             <p className="muted small">
-              يُضبط مفتاح مزود الذكاء الاصطناعي في الخادم. لا تضع مفتاح المزود
-              في هذا الحقل.
+              يُضبط مفتاح Gemini أو OpenAI على الخادم فقط؛ لا تضع مفتاح المزود في حقل رمز الوصول.
+              يوصى باستخدام المنصة على جهاز موثوق.
             </p>
             <button
               className="button primary"
+              disabled={!!busy}
               onClick={() => changePage("create")}
             >
               العودة إلى إنشاء المحتوى
