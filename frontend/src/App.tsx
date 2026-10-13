@@ -106,6 +106,7 @@ export default function App() {
   const [instruction, setInstruction] = useState("");
   const [selected, setSelected] = useState(0);
   const [view, setView] = useState<Format>("pptx");
+  const [presentationStyle, setPresentationStyle] = useState<"luxury" | "corporate" | "minimal">("luxury");
   const [projects, setProjects] = useState<Project[]>(readProjects);
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [file, setFile] = useState<File | null>(null);
@@ -295,7 +296,7 @@ export default function App() {
     await run("جارٍ تجهيز الملف…", async () => {
       validateContent(content);
       await downloadResponse(
-        await api(`/exports/${format}`, jsonBody(content)),
+        await api(`/exports/${format}${format === "pptx" ? `?design_style=${presentationStyle}` : ""}`, jsonBody(content)),
         `MAGHRABI-${format === "docx" ? "document" : "presentation"}.${format}`,
       );
       setNotice("تم تجهيز الملف وتنزيله. راجع تنسيقه النهائي في Office.");
@@ -1027,7 +1028,7 @@ export default function App() {
                           </div>
                           {view === "pptx" ? (
                             <div
-                              className="slide-preview"
+                              className={`slide-preview slide-preview--${presentationStyle}`}
                               dir={content.language === "ar" ? "rtl" : "ltr"}
                             >
                               <span>MAGHRABI / OFFICE STUDIO</span>
@@ -1061,6 +1062,23 @@ export default function App() {
                             Office. الشرائح الطويلة تُقسّم تلقائيًا عند التصدير،
                             وتُضاف شريحة غلاف.
                           </p>
+                          <div className="presentation-style-control">
+                            <label htmlFor="presentation-style">
+                              طابع تصميم PowerPoint
+                              <select
+                                id="presentation-style"
+                                value={presentationStyle}
+                                onChange={(e) => setPresentationStyle(e.target.value as "luxury" | "corporate" | "minimal")}
+                              >
+                                <option value="luxury">فاخر — كحلي وذهبي</option>
+                                <option value="corporate">مؤسسي — كحلي وفيروزي</option>
+                                <option value="minimal">عصري — بنفسجي هادئ</option>
+                              </select>
+                            </label>
+                            <p className="muted small">
+                              قوالب متنوعة: غلاف احترافي، فهرس للمحاور، بطاقات محتوى قابلة للتحرير وتوزيع آلي للنصوص الطويلة.
+                            </p>
+                          </div>
                           <div className="export-row">
                             <button
                               className="button primary"
