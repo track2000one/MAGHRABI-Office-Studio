@@ -99,6 +99,7 @@ export default function App() {
   >("loading");
   const [token, setToken] = useState("");
   const [authorized, setAuthorized] = useState(false);
+  const [aiVerified, setAiVerified] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -117,9 +118,11 @@ export default function App() {
       const data = await (await api("/ai/status")).json();
       setStatus(data.configured ? "ready" : "unconfigured");
       setAuthorized(data.authenticated === true);
+      setAiVerified(false);
     } catch {
       setStatus("offline");
       setAuthorized(false);
+      setAiVerified(false);
     }
   }
   useEffect(() => {
@@ -153,10 +156,18 @@ export default function App() {
       setNotice("تم تسجيل الدخول بنجاح. يمكنك استخدام الذكاء الاصطناعي لمدة 7 أيام على هذا المتصفح.");
     });
   }
+  async function testAIConnection() {
+    await run("جارٍ اختبار توليد محتوى فعلي باستخدام مزود الذكاء الاصطناعي…", async () => {
+      await api("/ai/test", { method: "POST" });
+      setAiVerified(true);
+      setNotice("نجح اختبار التوليد الفعلي. يمكنك الآن تجربة إنشاء محتواك.");
+    });
+  }
   async function signOut() {
     await run("جارٍ تسجيل الخروج…", async () => {
       await api("/ai/logout", { method: "POST" });
       setAuthorized(false);
+      setAiVerified(false);
       setNotice("تم تسجيل الخروج من خدمة الذكاء الاصطناعي.");
     });
   }
@@ -341,7 +352,7 @@ export default function App() {
   }
   const section = content?.sections[selected];
   const aiLabel = status === "ready"
-    ? (authorized ? "الذكاء الاصطناعي جاهز للاستخدام" : "الخدمة متصلة · يلزم تسجيل الدخول")
+    ? (authorized ? (aiVerified ? "الذكاء الاصطناعي يعمل · اختبار ناجح" : "إعدادات الذكاء الاصطناعي مكتملة · لم يُختبر التوليد") : "المزود مهيأ · يلزم تسجيل الدخول")
     : {
         unconfigured: "بانتظار إعداد الذكاء الاصطناعي",
         offline: "الخادم غير متصل",
@@ -390,7 +401,7 @@ export default function App() {
         </nav>
         <div className="sidebar-footer">
           <span
-            className={`connection-dot ${status === "ready" && authorized ? "connected" : ""}`}
+            className={`connection-dot ${status === "ready" && authorized && aiVerified ? "connected" : ""}`}
           />
           <strong>{aiLabel}</strong>
           <p>محتواك، بتنسيق يليق به.</p>
@@ -1321,7 +1332,7 @@ export default function App() {
           <div className="panel settings-panel">
             <h2>حالة الخدمة</h2>
             <div className="soft-note">
-              {status === "ready" ? "مزود الذكاء الاصطناعي متصل بالخادم" : aiLabel}
+              {status === "ready" ? (aiVerified ? "تم اختبار التوليد لدى مزود الذكاء الاصطناعي بنجاح" : "إعدادات مزود الذكاء الاصطناعي موجودة على الخادم؛ لم يُتحقق بعد من قدرته على التوليد") : aiLabel}
             </div>
             <p className="muted">
               حالة صلاحية الاستخدام: <strong>{authorized ? "مسجل الدخول" : "غير مسجل الدخول"}</strong>
@@ -1336,7 +1347,18 @@ export default function App() {
             <hr />
             {authorized ? (
               <>
-                <div className="soft-note">يمكنك الآن إنشاء المحتوى وتعديله بالذكاء الاصطناعي.</div>
+                <div className="soft-note">تم تسجيل الدخول بنجاح. يُرجى اختبار التوليد الفعلي للتحقق من صحة إعدادات مزود الذكاء الاصطناعي.</div>
+                <button
+                  className="button outline"
+                  disabled={!!busy || status !== "ready"}
+                  onClick={() => void testAIConnection()}
+                >
+                  {aiVerified ? "إعادة اختبار التوليد الفعلي" : "اختبار توليد تجريبي"}
+                </button>
+                <p className="muted small">
+                  يرسل هذا الاختبار موضوعًا تجريبيًا قصيرًا إلى المزود، وقد يستهلك جزءًا بسيطًا من رصيد الخدمة.
+                  عند فشل الاختبار ستظهر رسالة تساعدك في تحديد سبب المشكلة.
+                </p>
                 <p className="muted small">
                   جلسة الاستخدام صالحة لمدة تصل إلى 7 أيام منذ تسجيل الدخول. يمكنك إنهاؤها في أي وقت.
                 </p>
