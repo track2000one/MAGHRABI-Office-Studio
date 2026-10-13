@@ -52,6 +52,28 @@ def _color(hex_value: str):
     return RGBColor.from_string(hex_value)
 
 
+
+def _align(paragraph, rtl: bool, position: str = "start"):
+    _paragraph_direction(paragraph, rtl)
+    if position == "center":
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    elif position == "end":
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT if rtl else WD_ALIGN_PARAGRAPH.RIGHT
+    else:
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT if rtl else WD_ALIGN_PARAGRAPH.LEFT
+
+
+def _content_width(doc):
+    section = doc.sections[0]
+    return section.page_width - section.left_margin - section.right_margin
+
+
+def _logo_in(logo: bytes | None, custom: WordCustomization | None, location: str):
+    if not logo:
+        return False
+    return custom is None or custom.logo_placement in ("both", location)
+
+
 def _set_font(style, theme: Theme, size: int, color: str, *, bold=False):
     style.font.name = theme.face
     style.font.size = Pt(size)
@@ -182,9 +204,9 @@ def _add_page_break(doc):
     doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
 
 
-def _setup_styles(doc, theme: Theme, rtl: bool):
+def _setup_styles(doc, theme: Theme, rtl: bool, body_size: int = 11):
     normal = doc.styles["Normal"]
-    _set_font(normal, theme, 11, theme.dark)
+    _set_font(normal, theme, body_size, theme.dark)
     normal.paragraph_format.space_after = Pt(10)
     normal.paragraph_format.line_spacing = 1.48
     normal.paragraph_format.widow_control = True
@@ -211,9 +233,6 @@ def _cover(doc, content: Content, theme: Theme, rtl: bool, document_type: str = 
     lead = doc.add_paragraph()
     lead.paragraph_format.space_before = Pt(18)
     lead.paragraph_format.space_after = Pt(14)
-    if logo:
-        _logo_run(lead, logo)
-        lead.add_run("  ")
     brand = (custom.organization_name if custom else "") or ("" if logo else "MAGHRABI  /  OFFICE STUDIO")
     if brand:
         run = lead.add_run(brand)
@@ -222,6 +241,12 @@ def _cover(doc, content: Content, theme: Theme, rtl: bool, document_type: str = 
         run.font.color.rgb = _color(theme.accent)
     _paragraph_direction(lead, rtl)
     _rule(lead, theme.accent, size=21)
+    if _logo_in(logo, custom, "cover"):
+        logo_paragraph = doc.add_paragraph()
+        logo_paragraph.paragraph_format.space_before = Pt(9)
+        logo_paragraph.paragraph_format.space_after = Pt(4)
+        _logo_run(logo_paragraph, logo)
+        _align(logo_paragraph, rtl, custom.logo_alignment if custom else "start")
 
     spacer = doc.add_paragraph()
     spacer.paragraph_format.space_before = Pt(38)
@@ -255,7 +280,7 @@ def _cover(doc, content: Content, theme: Theme, rtl: bool, document_type: str = 
 
     panel = doc.add_table(rows=1, cols=1)
     panel.autofit = False
-    panel.columns[0].width = Inches(6.5)
+    panel.columns[0].width = _content_width(doc)
     cell = panel.cell(0, 0)
     _shade_cell(cell, theme.pale)
     _set_cell_margins(cell, top=245, bottom=245)
@@ -314,7 +339,7 @@ def _summary(doc, content: Content, theme: Theme, rtl: bool, document_type: str 
 
     table = doc.add_table(rows=1, cols=1)
     table.autofit = False
-    table.columns[0].width = Inches(6.5)
+    table.columns[0].width = _content_width(doc)
     cell = table.cell(0, 0)
     _shade_cell(cell, theme.pale)
     _set_cell_margins(cell, top=210, bottom=210)
@@ -335,16 +360,19 @@ def _configure_header_footer(doc, theme: Theme, rtl: bool, custom: WordCustomiza
     section.different_first_page_header_footer = True
     header = section.header.paragraphs[0]
     header.paragraph_format.space_after = Pt(0)
-    if logo:
-        _logo_run(header, logo, max_width=.68, max_height=.42)
-        header.add_run("  ")
     label = ((custom.header_text or custom.organization_name) if custom else "") or ("" if logo else "MAGHRABI   OFFICE STUDIO")
     mark = header.add_run(label)
     mark.bold = True
     mark.font.size = Pt(8)
     mark.font.color.rgb = _color(theme.muted)
-    _paragraph_direction(header, rtl)
+    _align(header, rtl, custom.header_alignment if custom else "start")
     _rule(header, theme.rule, size=5)
+    if _logo_in(logo, custom, "header"):
+        mark_logo = section.header.add_paragraph()
+        mark_logo.paragraph_format.space_before = Pt(2)
+        mark_logo.paragraph_format.space_after = Pt(0)
+        _logo_run(mark_logo, logo, max_width=.68, max_height=.36)
+        _align(mark_logo, rtl, custom.logo_alignment if custom else "start")
 
     footer = section.footer.paragraphs[0]
     footer.paragraph_format.space_after = Pt(0)
@@ -353,8 +381,13 @@ def _configure_header_footer(doc, theme: Theme, rtl: bool, custom: WordCustomiza
     text = footer.add_run((brand + "  |  " if brand else "") + ("صفحة " if rtl else "Page "))
     text.font.size = Pt(8)
     text.font.color.rgb = _color(theme.muted)
-    _field(footer, "PAGE")
-    _paragraph_direction(footer, rtl)
+    if custom is None or custom.show_page_numbers:
+        _field(footer, "PAGE")
+    else:
+        # Without a page field the literal page label is not needed.
+        for item in footer.runs:
+            item.text = item.text.replace("صفحة ", "").replace("Page ", "")
+    _align(footer, rtl, custom.footer_alignment if custom else "start")
 
 
 def _sections(doc, content: Content, theme: Theme, rtl: bool):
@@ -395,8 +428,9 @@ def _template_overview(doc, content: Content, theme: Theme, rtl: bool, document_
     _rule(p, theme.accent, size=11)
     table = doc.add_table(rows=0, cols=2)
     table.autofit = False
+    usable = _content_width(doc)
     table.columns[0].width = Inches(.72)
-    table.columns[1].width = Inches(5.70)
+    table.columns[1].width = usable - Inches(.72)
     for i, item in enumerate(content.sections, 1):
         cells = table.add_row().cells
         cells[0].text = f"{i:02d}"
@@ -420,20 +454,23 @@ def _formal_letter(doc, content: Content, theme: Theme, rtl: bool, custom: WordC
     """Compact correspondence layout; never invent recipient, date or signature."""
     section = doc.sections[0]
     # Letterhead is deliberately unbranded; no fictitious government letterhead.
-    section.top_margin = Inches(.92)
-    section.bottom_margin = Inches(.86)
+    if custom is None:
+        section.top_margin = Inches(.92)
+        section.bottom_margin = Inches(.86)
     section.different_first_page_header_footer = False
     header = section.header.paragraphs[0]
-    if logo:
-        _logo_run(header, logo, max_width=1.10, max_height=.62)
-        header.add_run("  ")
     if custom and (custom.header_text or custom.organization_name):
         mark = header.add_run(custom.header_text or custom.organization_name)
         mark.font.bold = True
         mark.font.size = Pt(10)
         mark.font.color.rgb = _color(theme.dark)
     _rule(header, theme.accent, size=14)
-    _paragraph_direction(header, rtl)
+    _align(header, rtl, custom.header_alignment if custom else "start")
+    if logo:
+        # Formal letters have no cover. A supplied logo stays in the letterhead.
+        logo_paragraph = section.header.add_paragraph()
+        _logo_run(logo_paragraph, logo, max_width=1.10, max_height=.50)
+        _align(logo_paragraph, rtl, custom.logo_alignment if custom else "start")
 
     title = doc.add_paragraph()
     title.paragraph_format.space_before = Pt(12)
@@ -470,12 +507,14 @@ def _formal_letter(doc, content: Content, theme: Theme, rtl: bool, custom: WordC
 
     # A small footer uses neutral document page numbering, not an official seal.
     footer = section.footer.paragraphs[0]
-    _paragraph_direction(footer, rtl)
     label = custom.footer_text if custom else ""
-    num = footer.add_run((label + "  |  " if label else "") + ("صفحة " if rtl else "Page "))
+    prefix = ("صفحة " if rtl else "Page ") if not custom or custom.show_page_numbers else ""
+    num = footer.add_run((label + "  |  " if label and prefix else label) + prefix)
     num.font.size = Pt(8)
     num.font.color.rgb = _color(theme.muted)
-    _field(footer, "PAGE")
+    if not custom or custom.show_page_numbers:
+        _field(footer, "PAGE")
+    _align(footer, rtl, custom.footer_alignment if custom else "start")
 
 
 
@@ -498,7 +537,7 @@ def _supplied_table(doc, custom: WordCustomization, theme: Theme, rtl: bool):
     table = doc.add_table(rows=0, cols=count)
     table.style = "Table Grid"
     table.autofit = False
-    column_width = Inches(6.42 / count)
+    column_width = _content_width(doc) // count
     for column in table.columns:
         column.width = column_width
     if rtl:
@@ -543,16 +582,19 @@ def export_premium_docx(content: Content, design_style: str = "luxury",
     rtl = content.language == "ar"
     doc = Document()
     section = doc.sections[0]
-    section.page_width = Inches(8.27)
-    section.page_height = Inches(11.69)
-    section.top_margin = Inches(.96)
-    section.bottom_margin = Inches(.86)
-    section.left_margin = Inches(.90)
-    section.right_margin = Inches(.90)
-    section.header_distance = Inches(.38)
+    landscape = bool(customization and customization.page_orientation == "landscape")
+    section.page_width = Inches(11.69 if landscape else 8.27)
+    section.page_height = Inches(8.27 if landscape else 11.69)
+    margins = customization.page_margins if customization else "standard"
+    left = {"compact": .68, "standard": .90, "spacious": 1.14}[margins]
+    top = {"compact": .74, "standard": .96, "spacious": 1.16}[margins]
+    section.left_margin = section.right_margin = Inches(left)
+    section.top_margin = Inches(max(top, 1.12) if logo else top)
+    section.bottom_margin = Inches({"compact": .70, "standard": .86, "spacious": 1.05}[margins])
+    section.header_distance = Inches(.32)
     section.footer_distance = Inches(.40)
 
-    _setup_styles(doc, theme, rtl)
+    _setup_styles(doc, theme, rtl, customization.body_font_size if customization else 11)
     if document_type == "letter":
         _formal_letter(doc, content, theme, rtl, customization, logo)
     else:
