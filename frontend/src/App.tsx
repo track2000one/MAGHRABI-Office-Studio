@@ -1962,7 +1962,7 @@ export default function App() {
             {projects.length ? (
               <div className="project-grid">
                 {projects.filter(p =>
-                  (projectFormat === "all" || (p.format || "pptx") === projectFormat) &&
+                  (projectFormat === "all" || (p.format || (p.context?.document_type && p.context.document_type !== "general" ? "docx" : "pptx")) === projectFormat) &&
                   (!projectQuery.trim() || (
                     p.content.title + " " + p.content.summary + " " +
                     p.content.sections.map(s => s.title).join(" ")
@@ -1972,7 +1972,7 @@ export default function App() {
                     <span className="app-icon files">◫</span>
                     <h3>{p.content.title.trim() || "مشروع بدون عنوان"}</h3>
                     <p className="muted">
-                      {(p.format || "pptx") === "docx" ? "مستند Word" : "عرض PowerPoint"}
+                      {(p.format || (p.context?.document_type && p.context.document_type !== "general" ? "docx" : "pptx")) === "docx" ? "مستند Word" : "عرض PowerPoint"}
                       {" · "}{p.content.sections.length} محاور
                       {" · "}{p.stage === "outline" ? "مخطط مبدئي" : "قابل للتحرير"}
                     </p>
@@ -1996,7 +1996,7 @@ export default function App() {
                           setPrevious(null);
                           setStage(p.stage === "outline" ? "outline" : "edit");
                           setSelected(0);
-                          setView(p.format || "pptx");
+                          setView(p.format || (p.context?.document_type && p.context.document_type !== "general" ? "docx" : "pptx"));
                           setPage("create");
                         }}
                       >
