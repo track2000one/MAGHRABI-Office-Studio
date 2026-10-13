@@ -2011,3 +2011,16 @@ textarea::placeholder {
 .word-preview-pdf-frame { display: block; width: 100%; height: min(75vh, 790px); min-height: 520px; background: #e9eef1; border: 0; }
 .word-real-preview > p { margin: 0; padding: 9px 14px; font-size: 11px; }
 @media (max-width: 650px) { .word-preview-pdf-frame { min-height: 420px; height: 62vh; } }
+
+
+/* Persistent project library with drafts, filters and portable backups. */
+.project-library-toolbar { padding: 19px 22px; margin-bottom: 18px; }
+.project-library-fields { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(145px, 1fr); gap: 14px; }
+.project-library-fields label { margin: 0; }
+.project-library-actions { display:flex; align-items: center; justify-content: flex-start; flex-wrap:wrap; gap:10px; margin-top:14px; }
+.project-library-actions .button { width:auto; }
+.visually-hidden { position:absolute !important; width:1px !important; height:1px !important; padding:0 !important; margin:-1px !important; overflow:hidden !important; clip:rect(0,0,0,0) !important; white-space:nowrap !important; border:0 !important; }
+@media (max-width: 620px) {
+  .project-library-fields { grid-template-columns: 1fr; }
+  .project-library-actions .button { width:100%; }
+}
