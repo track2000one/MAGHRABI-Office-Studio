@@ -653,6 +653,7 @@ export default function App() {
                       <label>
                         نوع مستند Word
                         <select
+                          aria-label="نوع مستند Word"
                           value={settings.document_type}
                           onChange={(e) => {
                             const document_type = e.target.value as DocumentType;
