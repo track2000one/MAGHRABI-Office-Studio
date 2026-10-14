@@ -33,3 +33,10 @@ def test_mutations_require_the_studio_client_header(client):
         "email": "sample@example.org", "password": "long-example-password",
     })
     assert response.status_code == 403
+
+
+def test_account_routes_are_mounted_in_the_production_application():
+    from app.main import app
+    mounted = {route.path for route in app.routes}
+    assert "/api/v1/account/status" in mounted
+    assert "/api/v1/projects" in mounted
