@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
 from . import ai, ai_session
+from .cloud_projects import router as cloud_router
 from .exports import export_docx, export_pptx, format_docx
 from .word_preview import render_word_preview
 from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
