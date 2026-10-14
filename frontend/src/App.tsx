@@ -729,6 +729,22 @@ export default function App() {
       " مشروع موجود أو غير صالح. بقيت النسخ المحلية دون حذف.");
   }
 
+  function downloadActiveProjectBackup() {
+    if (!content || !activeProjectId) return;
+    const snapshot = cloudSnapshot(activeProjectId);
+    if (!snapshot) return;
+    const data = JSON.stringify({
+      kind: "maghrabi-office-project-backup", version: 1,
+      exportedAt: new Date().toISOString(), projects: [snapshot],
+    }, null, 2);
+    const url = URL.createObjectURL(new Blob([data], {type: "application/json"}));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "MAGHRABI-unsaved-project-backup.json";
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
   function exportProjectBackup() {
     if (!projects.length) return;
     const data = JSON.stringify({
@@ -1268,10 +1284,18 @@ export default function App() {
                       </p>
                       <p className="small muted" role="status">
                         {saveStatus === "saving" ? "جارٍ حفظ المشروع تلقائيًا…" :
-                         saveStatus === "saved" ? "تم حفظ المشروع تلقائيًا في «مشاريعي»" :
-                         saveStatus === "error" ? "تعذر الحفظ التلقائي؛ راجع رسالة الخطأ." :
+                         saveStatus === "saved" ? (projectSource === "cloud"
+                           ? "تم حفظ المشروع تلقائيًا في حسابك السحابي"
+                           : "تم حفظ المشروع تلقائيًا في «مشاريعي»") :
+                         saveStatus === "error" ? "تعذر الحفظ التلقائي؛ راجع رسالة الخطأ ولا تغلق الصفحة." :
                          "سيُحفظ المشروع تلقائيًا أثناء العمل."}
                       </p>
+                      {saveStatus === "error" && projectSource === "cloud" && (
+                        <button type="button" className="button outline"
+                          onClick={downloadActiveProjectBackup}>
+                          تنزيل نسخة احتياطية من التعديلات غير المحفوظة
+                        </button>
+                      )}
                     </div>
                     <button
                       className="button outline"
