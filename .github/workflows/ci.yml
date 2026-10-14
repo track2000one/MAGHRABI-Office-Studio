@@ -27,5 +27,8 @@ jobs:
       - name: Verify actual Word-to-PDF preview in deployed image
         run: |
           docker run --rm --entrypoint python office-studio-check -c 'from app.content import Content; from app.exports import export_docx; from app.word_preview import render_word_preview; c=Content(title="تقرير تجريبي", language="ar", sections=[{"title":"المحور الأول","body":["هذا نص تجريبي للتحويل."],"notes":""},{"title":"المحور الثاني","body":["هذا نص إضافي."],"notes":""}]); pdf=render_word_preview(export_docx(c)); assert pdf.media_type=="application/pdf" and pdf.headers["x-preview-pages"].isdigit(); print("Real LibreOffice Word PDF preview rendered successfully")'
+      - name: Verify real PPTX-to-PDF slide rendering in deployed image
+        run: |
+          docker run --rm --entrypoint python office-studio-check -c 'from app.content import Content; from app.exports import export_pptx; from app.presentation_preview import render_presentation_preview; c=Content(title="عرض تطوير العمليات",language="ar",sections=[{"title":"خطوات العمل","body":["التحليل والإنجاز والمتابعة"],"notes":""}]); pdf=render_presentation_preview(export_pptx(c)); assert pdf.media_type=="application/pdf" and int(pdf.headers["x-preview-pages"])>=3; print("Real PPTX slide preview passed")'
       - name: Verify detailed Arabic study, logo and table in real paginated PDF
         run: docker run --rm --entrypoint python office-studio-check /app/backend/tests/study_preview_smoke.py

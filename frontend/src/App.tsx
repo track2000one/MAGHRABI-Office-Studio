@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, downloadResponse, example, jsonBody } from "./api";
 import type { Content, DocumentType, Format, RequestSettings, Section } from "./api";
 import PdfStudio from "./PdfStudio";
+import {blankArtwork, deleteArtwork, fileToDataUrl, presentationSignature, readArtwork, renderArtwork, saveArtwork} from "./presentationArtwork";
+import type {SlideArtwork} from "./presentationArtwork";
 
 type Page = "home" | "create" | "files" | "pdf" | "projects" | "settings";
 type Analysis = {
@@ -199,6 +201,11 @@ export default function App() {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState("");
   const [wordPagePreview, setWordPagePreview] = useState<{url: string; fingerprint: string; pages: number} | null>(null);
+  const [pptxPagePreview, setPptxPagePreview] = useState<{url: string; fingerprint: string; pages: number} | null>(null);
+  const [currentSlidePage, setCurrentSlidePage] = useState(0);
+  const [slideDesignInstruction, setSlideDesignInstruction] = useState("");
+  const [artwork, setArtwork] = useState<SlideArtwork>(blankArtwork);
+  const [artworkReady, setArtworkReady] = useState(false);
   const [projects, setProjects] = useState<Project[]>(readProjects);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -235,6 +242,27 @@ export default function App() {
   useEffect(() => () => {
     if (wordPagePreview?.url) URL.revokeObjectURL(wordPagePreview.url);
   }, [wordPagePreview]);
+  useEffect(() => () => {
+    if (pptxPagePreview?.url) URL.revokeObjectURL(pptxPagePreview.url);
+  }, [pptxPagePreview]);
+  useEffect(() => {
+    let mounted = true;
+    setArtworkReady(false);
+    setPptxPagePreview(null);
+    setCurrentSlidePage(0);
+    if (!activeProjectId) {
+      setArtwork(blankArtwork());
+      setArtworkReady(true);
+      return () => {mounted = false;};
+    }
+    void readArtwork(activeProjectId).then((saved) => {
+      if (mounted) {
+        setArtwork(saved);
+        setArtworkReady(true);
+      }
+    });
+    return () => {mounted = false;};
+  }, [activeProjectId]);
   useEffect(() => {
     // Discard legacy plaintext credentials previously saved in sessionStorage.
     sessionStorage.removeItem("maghrabi-office-access-token-v1");
@@ -410,6 +438,19 @@ export default function App() {
     setSelected(0);
   }
   // Invalidate the rendered PDF when content or any design input changes.
+  const usableArtwork = content
+    ? renderArtwork(artwork, content, presentationVisualMode === "nano_banana")
+    : {slides: {} as Record<string, string>};
+  const artworkCount = Number(Boolean(usableArtwork.cover)) +
+    Number(Boolean(usableArtwork.section)) + Object.keys(usableArtwork.slides).length;
+  const pptxPreviewFingerprint = JSON.stringify({
+    content, presentationStyle, presentationVisualMode,
+    artworkRevision: artworkCount ? artwork.revision : "",
+  });
+  const validPptxPreview = pptxPagePreview?.fingerprint === pptxPreviewFingerprint ? pptxPagePreview : null;
+  const visualsOutdated = presentationVisualMode === "nano_banana" &&
+    artwork.revision !== "" && !!content && artwork.signature !== presentationSignature(content);
+
   const wordPreviewFingerprint = JSON.stringify({
     content, brand, layout, documentStyle, documentType: settings.document_type,
     logo: logoFile && [logoFile.name, logoFile.size, logoFile.lastModified],
@@ -477,27 +518,138 @@ export default function App() {
     });
   }
 
+  function currentPresentationPayload(art: SlideArtwork = artwork) {
+    if (!content) throw new Error("لا يوجد محتوى لإنشاء العرض.");
+    return {
+      content,
+      artwork: renderArtwork(art, content, presentationVisualMode === "nano_banana"),
+    };
+  }
+
+  async function actualPowerPointPreview(art: SlideArtwork = artwork) {
+    if (!content) return;
+    validateContent(content);
+    if (!artworkReady) throw new Error("جارٍ استرجاع صور المشروع المحفوظة.");
+    const data = currentPresentationPayload(art);
+    const count = Number(Boolean(data.artwork.cover)) +
+      Number(Boolean(data.artwork.section)) + Object.keys(data.artwork.slides).length;
+    const fingerprint = JSON.stringify({
+      content, presentationStyle, presentationVisualMode,
+      artworkRevision: count ? art.revision : "",
+    });
+    const response = await api(
+      "/presentations/preview?design_style=" + presentationStyle,
+      jsonBody(data),
+    );
+    const blob = await response.blob();
+    if (!blob.size || !response.headers.get("content-type")?.includes("application/pdf")) {
+      throw new Error("لم يرجع الخادم معاينة PowerPoint فعلية صالحة.");
+    }
+    const url = URL.createObjectURL(blob);
+    const pages = Number(response.headers.get("X-Preview-Pages"));
+    if (!Number.isInteger(pages) || pages < 1) {
+      URL.revokeObjectURL(url);
+      throw new Error("تعذر قراءة عدد شرائح العرض المعروض.");
+    }
+    setPptxPagePreview({url, pages, fingerprint});
+    setCurrentSlidePage((index) => Math.min(index, pages - 1));
+    setView("pptx");
+  }
+
+  async function previewPowerPoint() {
+    await run("جارٍ عرض شرائح PowerPoint الفعلية…", async () => {
+      await actualPowerPointPreview();
+      setNotice("هذه معاينة فعلية لنفس محرك PPTX. اختر رقم الشريحة لمراجعتها قبل تنزيل العرض.");
+    });
+  }
+
+  async function persistPresentationImages(next: SlideArtwork) {
+    if (!activeProjectId) throw new Error("احفظ المشروع أولًا قبل تصميم الصور.");
+    await saveArtwork(activeProjectId, next);
+    setArtwork(next);
+    setPptxPagePreview(null);
+  }
+
+  async function generateCompleteArtwork() {
+    if (!content) return;
+    await run("جارٍ إنشاء صورتين باستخدام Nano Banana Pro (قد تُحتسب رسوم)…", async () => {
+      validateContent(content);
+      if (status !== "ready" || !authorized) {
+        throw new Error("سجّل الدخول من إعدادات الذكاء الاصطناعي أولًا.");
+      }
+      if (!artworkReady || !activeProjectId) throw new Error("لم يكتمل تحميل المشروع الحالي.");
+      const response = await api(
+        "/ai/presentations/generate-artwork?design_style=" + presentationStyle,
+        jsonBody(content),
+      );
+      const images: {cover: string; section: string} = await response.json();
+      const next: SlideArtwork = {
+        cover: images.cover,
+        section: images.section,
+        slides: {},
+        signature: presentationSignature(content),
+        revision: crypto.randomUUID(),
+      };
+      // Never report a saved design if the browser rejected its persistent storage.
+      await persistPresentationImages(next);
+      await actualPowerPointPreview(next);
+      setNotice("اكتمل التصميم العام وتم عرض الشرائح الفعلية. يمكنك الآن إعادة تصميم شريحة واحدة دون إعادة إنشاء الصور الأخرى.");
+    });
+  }
+
+  async function redesignOnlySelectedSlide() {
+    if (!content) return;
+    await run("جارٍ تصميم الشريحة المحددة فقط (طلب صورة مدفوع واحد)…", async () => {
+      validateContent(content);
+      if (status !== "ready" || !authorized) {
+        throw new Error("سجّل الدخول من إعدادات الذكاء الاصطناعي أولًا.");
+      }
+      if (!validPptxPreview || !artworkReady || !activeProjectId) {
+        throw new Error("أنشئ المعاينة الفعلية للعرض أولًا لاختيار رقم شريحة صحيح.");
+      }
+      const imageResponse = await api("/ai/presentations/redesign-slide", jsonBody({
+        content, design_style: presentationStyle,
+        slide_index: currentSlidePage, direction: slideDesignInstruction.trim(),
+      }));
+      if (!imageResponse.headers.get("content-type")?.includes("image/jpeg")) {
+        throw new Error("لم يرجع نموذج الذكاء الاصطناعي صورة للشريحة.");
+      }
+      const imageData = await fileToDataUrl(await imageResponse.blob());
+      const base = artwork.signature === presentationSignature(content)
+        ? artwork : blankArtwork();
+      const next: SlideArtwork = {
+        ...base,
+        slides: {...base.slides, [String(currentSlidePage)]: imageData},
+        signature: presentationSignature(content),
+        revision: crypto.randomUUID(),
+      };
+      await persistPresentationImages(next);
+      await actualPowerPointPreview(next);
+      setNotice("تم تغيير التصميم البصري للشريحة " + (currentSlidePage + 1) +
+        " فقط، مع المحافظة على نصوصها وعلى بقية الشرائح.");
+    });
+  }
+
   async function exportFile(format: Format) {
     if (!content) return;
-    const aiVisuals = format === "pptx" && presentationVisualMode === "nano_banana";
-    await run(aiVisuals ? "جارٍ تصميم الصور الاحترافية بواسطة Nano Banana Pro…" : "جارٍ تجهيز الملف…", async () => {
+    const paidMode = format === "pptx" && presentationVisualMode === "nano_banana";
+    await run("جارٍ تجهيز الملف القابل للتحرير…", async () => {
       validateContent(content);
-      if (aiVisuals && (status !== "ready" || !authorized)) {
-        throw new Error("لإنشاء الصور عبر Nano Banana Pro، سجّل الدخول أولًا من إعدادات الذكاء الاصطناعي.");
-      }
+      if (!artworkReady) throw new Error("جارٍ تحميل صور المشروع من التخزين المحلي.");
+      if (paidMode && (status !== "ready" || !authorized))
+        throw new Error("للتصميم عبر Nano Banana، سجّل الدخول أولًا من إعدادات الذكاء الاصطناعي.");
+      if (paidMode && !artworkCount)
+        throw new Error("أنشئ التصميم الكامل أو أعد تصميم شريحة قبل تنزيل نسخة Nano Banana.");
+      const payload = currentPresentationPayload();
       const response = format === "docx"
         ? await requestWord(false)
-        : await api(
-            (aiVisuals ? "/ai/exports/pptx" : "/exports/pptx") + "?design_style=" + presentationStyle,
-            jsonBody(content),
-          );
+        : paidMode
+          ? await api("/presentations/export?design_style=" + presentationStyle, jsonBody(payload))
+          : await api("/exports/pptx?design_style=" + presentationStyle, jsonBody(content));
       await downloadResponse(
-        response,
-        "MAGHRABI-" + (format === "docx" ? "document" : "presentation") + "." + format,
+        response, "MAGHRABI-" + (format === "docx" ? "document" : "presentation") + "." + format,
       );
-      setNotice(aiVisuals
-        ? "تم تنزيل العرض بتصاميم Nano Banana. النصوص والأشكال قابلة للتحرير؛ الصور المولدة عناصر صور منفصلة."
-        : "تم تجهيز الملف وتنزيله. راجع تنسيقه النهائي في Office.");
+      setNotice("تم تنزيل الملف. معاينة PowerPoint تستخدم محرك التصدير نفسه، وتبقى النصوص والأشكال قابلة للتحرير.");
     });
   }
   function saveDesignTemplate() {
@@ -1419,19 +1571,47 @@ export default function App() {
                             </button>
                           </div>
                           {view === "pptx" ? (
-                            <div
-                              className={`slide-preview slide-preview--${presentationStyle}`}
-                              dir={content.language === "ar" ? "rtl" : "ltr"}
-                            >
-                              <span>MAGHRABI / OFFICE STUDIO</span>
-                              <h2>{section?.title || content.title}</h2>
-                              {section?.body.map((p, i) => (
-                                <p key={i}>{p}</p>
-                              ))}
-                              <small>
-                                {selected + 1} / {content.sections.length}
-                              </small>
-                            </div>
+                            validPptxPreview ? (
+                              <section className="pptx-real-preview" aria-label="المعاينة الفعلية لشرائح PowerPoint">
+                                <div className="word-real-preview-bar">
+                                  <strong>العرض الفعلي قبل التنزيل</strong>
+                                  <span>{validPptxPreview.pages} شريحة</span>
+                                  <a href={validPptxPreview.url} target="_blank" rel="noopener noreferrer">فتح العرض مكبّرًا</a>
+                                </div>
+                                <div className="pptx-preview-nav">
+                                  <button type="button" className="button outline" disabled={currentSlidePage <= 0}
+                                    onClick={() => setCurrentSlidePage(Math.max(0, currentSlidePage - 1))}>السابقة</button>
+                                  <label>الشريحة
+                                    <select aria-label="رقم الشريحة في المعاينة الفعلية"
+                                      value={currentSlidePage}
+                                      onChange={(e) => setCurrentSlidePage(Number(e.target.value))}>
+                                      {Array.from({length: validPptxPreview.pages}, (_, i) => (
+                                        <option key={i} value={i}>{i + 1} / {validPptxPreview.pages}</option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <button type="button" className="button outline"
+                                    disabled={currentSlidePage >= validPptxPreview.pages - 1}
+                                    onClick={() => setCurrentSlidePage(Math.min(validPptxPreview.pages - 1, currentSlidePage + 1))}>التالية</button>
+                                </div>
+                                <iframe key={currentSlidePage} title="شرائح PowerPoint الفعلية"
+                                  src={validPptxPreview.url + "#toolbar=1&navpanes=0&page=" + (currentSlidePage + 1) + "&view=FitH"}
+                                  className="word-preview-pdf-frame"/>
+                                <p className="small muted">معاينة PDF مأخوذة من ملف PowerPoint الحقيقي؛ قد تختلف الخطوط قليلًا على جهازك.</p>
+                              </section>
+                            ) : (
+                              <div
+                                className={`slide-preview slide-preview--${presentationStyle}`}
+                                dir={content.language === "ar" ? "rtl" : "ltr"}
+                              >
+                                <span>MAGHRABI / OFFICE STUDIO</span>
+                                <h2>{section?.title || content.title}</h2>
+                                {section?.body.map((p, i) => (
+                                  <p key={i}>{p}</p>
+                                ))}
+                                <small>{selected + 1} / {content.sections.length}</small>
+                              </div>
+                            )
                           ) : wordPagePreview && wordPagePreview.fingerprint === wordPreviewFingerprint ? (
                             <section className="word-real-preview" aria-label="المعاينة الفعلية لصفحات Word">
                               <div className="word-real-preview-bar">
@@ -1478,6 +1658,12 @@ export default function App() {
                             </article>
                           )}
                           <div className="word-preview-toolbar">
+                            {view === "pptx" && (
+                              <button type="button" className="button outline" disabled={!!busy || !artworkReady}
+                                onClick={() => void previewPowerPoint()}>
+                                معاينة العرض الفعلية قبل التنزيل
+                              </button>
+                            )}
                             <button type="button" className="button outline" disabled={!!busy} onClick={() => void previewActualWordPages()}>
                               معاينة الصفحات الفعلية لملف Word
                             </button>
@@ -1487,7 +1673,9 @@ export default function App() {
                               ? (wordPagePreview && wordPagePreview.fingerprint === wordPreviewFingerprint
                                 ? "صفحات PDF محوّلة من مستند Word الحالي؛ وقد تختلف فروق طفيفة في الخطوط عن Microsoft Word."
                                 : "المعاينة النصية أعلاه تقريبية. اضغط «معاينة الصفحات الفعلية» لرؤية فواصل الصفحات والترويسات والجداول.")
-                              : "معاينة الشرائح تقريبية؛ المحتوى الطويل يُقسّم تلقائيًا عند تصدير PowerPoint."}
+                              : validPptxPreview
+                                ? "يُعرض ملف PowerPoint الحقيقي بصيغة PDF؛ يتم تنزيل PPTX بنصوص وأشكال قابلة للتحرير."
+                                : "المعاينة النصية تقريبية. اضغط «معاينة العرض الفعلية قبل التنزيل» لمراجعة جميع الشرائح كما ستظهر عند التصدير."}
                           </p>
                           <div className="presentation-style-control">
                             <label htmlFor="presentation-style">
@@ -1518,10 +1706,35 @@ export default function App() {
                             </label>
                             <p className="muted small">
                               {presentationVisualMode === "nano_banana"
-                                ? "عند التنزيل، يُنشئ Nano Banana Pro صورتين فنيتين للغلاف والشرائح المناسبة عبر Gemini API (قد تترتب رسوم لدى Google). تُرسل عناوين العرض والمحاور فقط، ولا تُرسل نصوص الفقرات أو ملاحظات المتحدث. تظل النصوص والأشكال قابلة للتحرير، أما الصور فليست عناصر رسومية مفككة."
+                                ? "اضغط «إنشاء التصميم الكامل» للحصول على صورتين من Nano Banana Pro ثم راجع العرض الفعلي قبل التنزيل. يمكنك أيضًا إعادة تصميم شريحة محددة بطلب واحد. الصور تُحفظ للمشروع في هذا المتصفح وتُستخدم للمعاينة والتصدير دون إعادة دفع مقابل توليدها. تُرسل عناوين العرض والمحاور فقط، ولا تُرسل الفقرات أو ملاحظات المتحدث إلى نموذج الصور."
                                 : "يحتفظ المحرك بكافة العناوين والمحتويات والأشكال الأصلية داخل PowerPoint، من دون طلبات إنشاء صور مدفوعة."}
                             </p>
                           </div>
+                          {presentationVisualMode === "nano_banana" && (
+                            <section className="pptx-design-tools" aria-label="أدوات التصميم الاحترافي بالذكاء الاصطناعي">
+                              <h3>استوديو التصميم البصري — Nano Banana Pro 🍌</h3>
+                              <button type="button" className="button primary" disabled={!!busy || !artworkReady}
+                                onClick={() => void generateCompleteArtwork()}>
+                                إنشاء التصميم الكامل (صورتان مدفوعتان)
+                              </button>
+                              <p className="muted small">
+                                {visualsOutdated
+                                  ? "تغير محتوى العرض بعد آخر توليد؛ الصور القديمة محفوظة ولكنها لا تُستخدم حتى إعادة التصميم."
+                                  : artworkCount
+                                    ? "عدد الصور المستخدمة: " + artworkCount + ". المعاينة والتصدير لا يعيدان توليد الصور."
+                                    : "لم تُنشأ صور بعد؛ يمكنك معاينة العرض العادي أولًا ثم إعادة تصميم شريحة واحدة."}
+                              </p>
+                              <label htmlFor="pptx-redesign-direction">توجيه تصميم الشريحة المختارة (اختياري)</label>
+                              <textarea id="pptx-redesign-direction" rows={2} maxLength={250}
+                                value={slideDesignInstruction} onChange={(e) => setSlideDesignInstruction(e.target.value)}
+                                placeholder="مثال: تصميم معماري فاخر بخطوط ذهبية وإضاءة هادئة، دون كتابة نص داخل الصورة"/>
+                              <button type="button" className="button outline" disabled={!!busy || !validPptxPreview || !artworkReady}
+                                onClick={() => void redesignOnlySelectedSlide()}>
+                                إعادة تصميم الشريحة {validPptxPreview ? currentSlidePage + 1 : "المحددة"} فقط (طلب صورة واحد)
+                              </button>
+                              <p className="muted small">اختر رقم الشريحة من المعاينة الفعلية أعلاه قبل التعديل. تحفظ الصور في المتصفح فقط؛ النسخة الاحتياطية النصية لا تتضمن ملفات الصور الكبيرة.</p>
+                            </section>
+                          )}
                           <div className="presentation-style-control word-style-control">
                             <h3 className="template-library-heading">مكتبة قوالب Word الجاهزة</h3>
                             <div className="template-library-grid" aria-label="مكتبة قوالب Word">

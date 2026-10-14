@@ -337,22 +337,40 @@ def _content_slide(deck: Presentation, section: Section, section_index: int,
 
 
 def export_premium_pptx(content: Content, design_style: str = "luxury",
-                        visual_assets: dict[str, bytes] | None = None) -> bytes:
+                        visual_assets: dict[str, bytes] | None = None,
+                        slide_visuals: dict[int, bytes] | None = None) -> bytes:
     if design_style not in STYLE_NAMES:
         raise ValueError("Unsupported PowerPoint design style")
     theme = THEMES[design_style]
     rtl = content.language == "ar"
     deck = Presentation()
     deck.slide_width, deck.slide_height = Inches(WIDTH), Inches(HEIGHT)
-    _cover(deck, content, theme, rtl, (visual_assets or {}).get("cover"))
+    overrides = slide_visuals or {}
+    _cover(deck, content, theme, rtl,
+           overrides.get(0) or (visual_assets or {}).get("cover"))
     faded_visual = (_faded_artwork(visual_assets["section"], theme.paper)
                     if visual_assets and visual_assets.get("section") else None)
     _overview(deck, content, theme, rtl)
     _contents(deck, content, theme, rtl)
     for section_idx, section in enumerate(content.sections, 1):
         for page_idx, group in enumerate(_layout_groups(section)):
+            index = len(deck.slides)
+            custom = index in overrides
             _content_slide(deck, section, section_idx, page_idx, group, theme, rtl,
-                           (visual_assets or {}).get("section"), faded_visual)
+                           None if custom else (visual_assets or {}).get("section"),
+                           None if custom else faded_visual)
+    for index, image in overrides.items():
+        if index < 0 or index >= len(deck.slides):
+            raise ValueError("Slide override index outside generated deck")
+        if index == 0:
+            continue  # Cover uses its full-resolution foreground composition.
+        slide = deck.slides[index]
+        art = _faded_artwork(image, theme.paper)
+        shape = slide.shapes.add_picture(BytesIO(art), 0, 0, Inches(WIDTH), Inches(HEIGHT))
+        # Artwork is *behind* native PPTX shapes and text, never over them.
+        tree = slide.shapes._spTree
+        tree.remove(shape._element)
+        tree.insert(2, shape._element)
     out = BytesIO()
     deck.save(out)
     return out.getvalue()
