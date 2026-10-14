@@ -56,7 +56,8 @@ def format_docx(data: bytes) -> bytes:
 
 
 def export_pptx(content: Content, design_style: str = "luxury",
-                visual_assets: dict[str, bytes] | None = None) -> bytes:
+                visual_assets: dict[str, bytes] | None = None,
+                slide_visuals: dict[int, bytes] | None = None) -> bytes:
     """Produce editable slides; optional AI artwork never rasterizes native content."""
     from .presentation_design import export_premium_pptx
-    return export_premium_pptx(content, design_style, visual_assets)
+    return export_premium_pptx(content, design_style, visual_assets, slide_visuals)
