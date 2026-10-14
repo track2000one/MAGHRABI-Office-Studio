@@ -1571,19 +1571,47 @@ export default function App() {
                             </button>
                           </div>
                           {view === "pptx" ? (
-                            <div
-                              className={`slide-preview slide-preview--${presentationStyle}`}
-                              dir={content.language === "ar" ? "rtl" : "ltr"}
-                            >
-                              <span>MAGHRABI / OFFICE STUDIO</span>
-                              <h2>{section?.title || content.title}</h2>
-                              {section?.body.map((p, i) => (
-                                <p key={i}>{p}</p>
-                              ))}
-                              <small>
-                                {selected + 1} / {content.sections.length}
-                              </small>
-                            </div>
+                            validPptxPreview ? (
+                              <section className="pptx-real-preview" aria-label="المعاينة الفعلية لشرائح PowerPoint">
+                                <div className="word-real-preview-bar">
+                                  <strong>العرض الفعلي قبل التنزيل</strong>
+                                  <span>{validPptxPreview.pages} شريحة</span>
+                                  <a href={validPptxPreview.url} target="_blank" rel="noopener noreferrer">فتح العرض مكبّرًا</a>
+                                </div>
+                                <div className="pptx-preview-nav">
+                                  <button type="button" className="button outline" disabled={currentSlidePage <= 0}
+                                    onClick={() => setCurrentSlidePage(Math.max(0, currentSlidePage - 1))}>السابقة</button>
+                                  <label>الشريحة
+                                    <select aria-label="رقم الشريحة في المعاينة الفعلية"
+                                      value={currentSlidePage}
+                                      onChange={(e) => setCurrentSlidePage(Number(e.target.value))}>
+                                      {Array.from({length: validPptxPreview.pages}, (_, i) => (
+                                        <option key={i} value={i}>{i + 1} / {validPptxPreview.pages}</option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <button type="button" className="button outline"
+                                    disabled={currentSlidePage >= validPptxPreview.pages - 1}
+                                    onClick={() => setCurrentSlidePage(Math.min(validPptxPreview.pages - 1, currentSlidePage + 1))}>التالية</button>
+                                </div>
+                                <iframe key={currentSlidePage} title="شرائح PowerPoint الفعلية"
+                                  src={validPptxPreview.url + "#toolbar=1&navpanes=0&page=" + (currentSlidePage + 1) + "&view=FitH"}
+                                  className="word-preview-pdf-frame"/>
+                                <p className="small muted">معاينة PDF مأخوذة من ملف PowerPoint الحقيقي؛ قد تختلف الخطوط قليلًا على جهازك.</p>
+                              </section>
+                            ) : (
+                              <div
+                                className={`slide-preview slide-preview--${presentationStyle}`}
+                                dir={content.language === "ar" ? "rtl" : "ltr"}
+                              >
+                                <span>MAGHRABI / OFFICE STUDIO</span>
+                                <h2>{section?.title || content.title}</h2>
+                                {section?.body.map((p, i) => (
+                                  <p key={i}>{p}</p>
+                                ))}
+                                <small>{selected + 1} / {content.sections.length}</small>
+                              </div>
+                            )
                           ) : wordPagePreview && wordPagePreview.fingerprint === wordPreviewFingerprint ? (
                             <section className="word-real-preview" aria-label="المعاينة الفعلية لصفحات Word">
                               <div className="word-real-preview-bar">
@@ -1630,6 +1658,12 @@ export default function App() {
                             </article>
                           )}
                           <div className="word-preview-toolbar">
+                            {view === "pptx" && (
+                              <button type="button" className="button outline" disabled={!!busy || !artworkReady}
+                                onClick={() => void previewPowerPoint()}>
+                                معاينة العرض الفعلية قبل التنزيل
+                              </button>
+                            )}
                             <button type="button" className="button outline" disabled={!!busy} onClick={() => void previewActualWordPages()}>
                               معاينة الصفحات الفعلية لملف Word
                             </button>
@@ -1639,7 +1673,9 @@ export default function App() {
                               ? (wordPagePreview && wordPagePreview.fingerprint === wordPreviewFingerprint
                                 ? "صفحات PDF محوّلة من مستند Word الحالي؛ وقد تختلف فروق طفيفة في الخطوط عن Microsoft Word."
                                 : "المعاينة النصية أعلاه تقريبية. اضغط «معاينة الصفحات الفعلية» لرؤية فواصل الصفحات والترويسات والجداول.")
-                              : "معاينة الشرائح تقريبية؛ المحتوى الطويل يُقسّم تلقائيًا عند تصدير PowerPoint."}
+                              : validPptxPreview
+                                ? "يُعرض ملف PowerPoint الحقيقي بصيغة PDF؛ يتم تنزيل PPTX بنصوص وأشكال قابلة للتحرير."
+                                : "المعاينة النصية تقريبية. اضغط «معاينة العرض الفعلية قبل التنزيل» لمراجعة جميع الشرائح كما ستظهر عند التصدير."}
                           </p>
                           <div className="presentation-style-control">
                             <label htmlFor="presentation-style">
@@ -1670,10 +1706,35 @@ export default function App() {
                             </label>
                             <p className="muted small">
                               {presentationVisualMode === "nano_banana"
-                                ? "عند التنزيل، يُنشئ Nano Banana Pro صورتين فنيتين للغلاف والشرائح المناسبة عبر Gemini API (قد تترتب رسوم لدى Google). تُرسل عناوين العرض والمحاور فقط، ولا تُرسل نصوص الفقرات أو ملاحظات المتحدث. تظل النصوص والأشكال قابلة للتحرير، أما الصور فليست عناصر رسومية مفككة."
+                                ? "اضغط «إنشاء التصميم الكامل» للحصول على صورتين من Nano Banana Pro ثم راجع العرض الفعلي قبل التنزيل. يمكنك أيضًا إعادة تصميم شريحة محددة بطلب واحد. الصور تُحفظ للمشروع في هذا المتصفح وتُستخدم للمعاينة والتصدير دون إعادة دفع مقابل توليدها. تُرسل عناوين العرض والمحاور فقط، ولا تُرسل الفقرات أو ملاحظات المتحدث إلى نموذج الصور."
                                 : "يحتفظ المحرك بكافة العناوين والمحتويات والأشكال الأصلية داخل PowerPoint، من دون طلبات إنشاء صور مدفوعة."}
                             </p>
                           </div>
+                          {presentationVisualMode === "nano_banana" && (
+                            <section className="pptx-design-tools" aria-label="أدوات التصميم الاحترافي بالذكاء الاصطناعي">
+                              <h3>استوديو التصميم البصري — Nano Banana Pro 🍌</h3>
+                              <button type="button" className="button primary" disabled={!!busy || !artworkReady}
+                                onClick={() => void generateCompleteArtwork()}>
+                                إنشاء التصميم الكامل (صورتان مدفوعتان)
+                              </button>
+                              <p className="muted small">
+                                {visualsOutdated
+                                  ? "تغير محتوى العرض بعد آخر توليد؛ الصور القديمة محفوظة ولكنها لا تُستخدم حتى إعادة التصميم."
+                                  : artworkCount
+                                    ? "عدد الصور المستخدمة: " + artworkCount + ". المعاينة والتصدير لا يعيدان توليد الصور."
+                                    : "لم تُنشأ صور بعد؛ يمكنك معاينة العرض العادي أولًا ثم إعادة تصميم شريحة واحدة."}
+                              </p>
+                              <label htmlFor="pptx-redesign-direction">توجيه تصميم الشريحة المختارة (اختياري)</label>
+                              <textarea id="pptx-redesign-direction" rows={2} maxLength={250}
+                                value={slideDesignInstruction} onChange={(e) => setSlideDesignInstruction(e.target.value)}
+                                placeholder="مثال: تصميم معماري فاخر بخطوط ذهبية وإضاءة هادئة، دون كتابة نص داخل الصورة"/>
+                              <button type="button" className="button outline" disabled={!!busy || !validPptxPreview || !artworkReady}
+                                onClick={() => void redesignOnlySelectedSlide()}>
+                                إعادة تصميم الشريحة {validPptxPreview ? currentSlidePage + 1 : "المحددة"} فقط (طلب صورة واحد)
+                              </button>
+                              <p className="muted small">اختر رقم الشريحة من المعاينة الفعلية أعلاه قبل التعديل. تحفظ الصور في المتصفح فقط؛ النسخة الاحتياطية النصية لا تتضمن ملفات الصور الكبيرة.</p>
+                            </section>
+                          )}
                           <div className="presentation-style-control word-style-control">
                             <h3 className="template-library-heading">مكتبة قوالب Word الجاهزة</h3>
                             <div className="template-library-grid" aria-label="مكتبة قوالب Word">
