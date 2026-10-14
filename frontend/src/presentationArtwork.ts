@@ -53,8 +53,14 @@ async function requestFromDatabase<T>(mode: IDBTransactionMode, key: string, val
       const request = mode === "readonly"
         ? object.get(key)
         : value ? object.put(value, key) : object.delete(key);
-      request.onsuccess = () => resolve(request.result as T | undefined);
+      request.onsuccess = () => {
+        if (mode === "readonly") resolve(request.result as T | undefined);
+      };
       request.onerror = () => reject(request.error);
+      transaction.oncomplete = () => {
+        if (mode === "readwrite") resolve(undefined);
+      };
+      transaction.onabort = () => reject(transaction.error);
       transaction.onerror = () => reject(transaction.error);
     });
   } finally {
