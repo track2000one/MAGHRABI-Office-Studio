@@ -2024,3 +2024,26 @@ textarea::placeholder {
   .project-library-fields { grid-template-columns: 1fr; }
   .project-library-actions .button { width:100%; }
 }
+
+
+/* Account-scoped PostgreSQL cloud project library */
+.cloud-panel {margin-bottom: 24px; padding: 24px; border-color: #bfd4df; }
+.cloud-panel-heading, .cloud-account-actions {display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:14px;}
+.cloud-panel-heading h2 {margin:0 0 6px; font-size:19px;}
+.cloud-connected {font-size:12px; color:#127d6e; border:1px solid #afe0d3; border-radius:999px; padding:5px 11px;}
+.cloud-account-form {max-width:620px; margin:14px 0;}
+.cloud-account-form form {display:grid; gap:12px;}
+.cloud-account-form label {display:grid; gap:7px;}
+.cloud-account-form button {width:max-content;}
+.cloud-invitation, .cloud-import-local {border-top:1px solid #dce7eb; margin-top:17px; padding-top:14px;}
+.cloud-invitation code {overflow-wrap:anywhere; user-select:all;}
+.cloud-account-actions {margin:14px 0;}
+.cloud-account-actions .button {width:auto;}
+.cloud-account-actions label {max-width:260px;}
+.cloud-project-grid {margin-top:14px;}
+.cloud-project-grid .project-card {min-width:0;}
+@media(max-width: 640px) {
+  .cloud-panel {padding:17px;}
+  .cloud-account-actions .button {width:100%;}
+  .cloud-account-form button {width:100%;}
+}
