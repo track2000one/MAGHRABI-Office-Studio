@@ -518,27 +518,138 @@ export default function App() {
     });
   }
 
+  function currentPresentationPayload(art: SlideArtwork = artwork) {
+    if (!content) throw new Error("لا يوجد محتوى لإنشاء العرض.");
+    return {
+      content,
+      artwork: renderArtwork(art, content, presentationVisualMode === "nano_banana"),
+    };
+  }
+
+  async function actualPowerPointPreview(art: SlideArtwork = artwork) {
+    if (!content) return;
+    validateContent(content);
+    if (!artworkReady) throw new Error("جارٍ استرجاع صور المشروع المحفوظة.");
+    const data = currentPresentationPayload(art);
+    const count = Number(Boolean(data.artwork.cover)) +
+      Number(Boolean(data.artwork.section)) + Object.keys(data.artwork.slides).length;
+    const fingerprint = JSON.stringify({
+      content, presentationStyle, presentationVisualMode,
+      artworkRevision: count ? art.revision : "",
+    });
+    const response = await api(
+      "/presentations/preview?design_style=" + presentationStyle,
+      jsonBody(data),
+    );
+    const blob = await response.blob();
+    if (!blob.size || !response.headers.get("content-type")?.includes("application/pdf")) {
+      throw new Error("لم يرجع الخادم معاينة PowerPoint فعلية صالحة.");
+    }
+    const url = URL.createObjectURL(blob);
+    const pages = Number(response.headers.get("X-Preview-Pages"));
+    if (!Number.isInteger(pages) || pages < 1) {
+      URL.revokeObjectURL(url);
+      throw new Error("تعذر قراءة عدد شرائح العرض المعروض.");
+    }
+    setPptxPagePreview({url, pages, fingerprint});
+    setCurrentSlidePage((index) => Math.min(index, pages - 1));
+    setView("pptx");
+  }
+
+  async function previewPowerPoint() {
+    await run("جارٍ عرض شرائح PowerPoint الفعلية…", async () => {
+      await actualPowerPointPreview();
+      setNotice("هذه معاينة فعلية لنفس محرك PPTX. اختر رقم الشريحة لمراجعتها قبل تنزيل العرض.");
+    });
+  }
+
+  async function persistPresentationImages(next: SlideArtwork) {
+    if (!activeProjectId) throw new Error("احفظ المشروع أولًا قبل تصميم الصور.");
+    await saveArtwork(activeProjectId, next);
+    setArtwork(next);
+    setPptxPagePreview(null);
+  }
+
+  async function generateCompleteArtwork() {
+    if (!content) return;
+    await run("جارٍ إنشاء صورتين باستخدام Nano Banana Pro (قد تُحتسب رسوم)…", async () => {
+      validateContent(content);
+      if (status !== "ready" || !authorized) {
+        throw new Error("سجّل الدخول من إعدادات الذكاء الاصطناعي أولًا.");
+      }
+      if (!artworkReady || !activeProjectId) throw new Error("لم يكتمل تحميل المشروع الحالي.");
+      const response = await api(
+        "/ai/presentations/generate-artwork?design_style=" + presentationStyle,
+        jsonBody(content),
+      );
+      const images: {cover: string; section: string} = await response.json();
+      const next: SlideArtwork = {
+        cover: images.cover,
+        section: images.section,
+        slides: {},
+        signature: presentationSignature(content),
+        revision: crypto.randomUUID(),
+      };
+      // Never report a saved design if the browser rejected its persistent storage.
+      await persistPresentationImages(next);
+      await actualPowerPointPreview(next);
+      setNotice("اكتمل التصميم العام وتم عرض الشرائح الفعلية. يمكنك الآن إعادة تصميم شريحة واحدة دون إعادة إنشاء الصور الأخرى.");
+    });
+  }
+
+  async function redesignOnlySelectedSlide() {
+    if (!content) return;
+    await run("جارٍ تصميم الشريحة المحددة فقط (طلب صورة مدفوع واحد)…", async () => {
+      validateContent(content);
+      if (status !== "ready" || !authorized) {
+        throw new Error("سجّل الدخول من إعدادات الذكاء الاصطناعي أولًا.");
+      }
+      if (!validPptxPreview || !artworkReady || !activeProjectId) {
+        throw new Error("أنشئ المعاينة الفعلية للعرض أولًا لاختيار رقم شريحة صحيح.");
+      }
+      const imageResponse = await api("/ai/presentations/redesign-slide", jsonBody({
+        content, design_style: presentationStyle,
+        slide_index: currentSlidePage, direction: slideDesignInstruction.trim(),
+      }));
+      if (!imageResponse.headers.get("content-type")?.includes("image/jpeg")) {
+        throw new Error("لم يرجع نموذج الذكاء الاصطناعي صورة للشريحة.");
+      }
+      const imageData = await fileToDataUrl(await imageResponse.blob());
+      const base = artwork.signature === presentationSignature(content)
+        ? artwork : blankArtwork();
+      const next: SlideArtwork = {
+        ...base,
+        slides: {...base.slides, [String(currentSlidePage)]: imageData},
+        signature: presentationSignature(content),
+        revision: crypto.randomUUID(),
+      };
+      await persistPresentationImages(next);
+      await actualPowerPointPreview(next);
+      setNotice("تم تغيير التصميم البصري للشريحة " + (currentSlidePage + 1) +
+        " فقط، مع المحافظة على نصوصها وعلى بقية الشرائح.");
+    });
+  }
+
   async function exportFile(format: Format) {
     if (!content) return;
-    const aiVisuals = format === "pptx" && presentationVisualMode === "nano_banana";
-    await run(aiVisuals ? "جارٍ تصميم الصور الاحترافية بواسطة Nano Banana Pro…" : "جارٍ تجهيز الملف…", async () => {
+    const paidMode = format === "pptx" && presentationVisualMode === "nano_banana";
+    await run("جارٍ تجهيز الملف القابل للتحرير…", async () => {
       validateContent(content);
-      if (aiVisuals && (status !== "ready" || !authorized)) {
-        throw new Error("لإنشاء الصور عبر Nano Banana Pro، سجّل الدخول أولًا من إعدادات الذكاء الاصطناعي.");
-      }
+      if (!artworkReady) throw new Error("جارٍ تحميل صور المشروع من التخزين المحلي.");
+      if (paidMode && (status !== "ready" || !authorized))
+        throw new Error("للتصميم عبر Nano Banana، سجّل الدخول أولًا من إعدادات الذكاء الاصطناعي.");
+      if (paidMode && !artworkCount)
+        throw new Error("أنشئ التصميم الكامل أو أعد تصميم شريحة قبل تنزيل نسخة Nano Banana.");
+      const payload = currentPresentationPayload();
       const response = format === "docx"
         ? await requestWord(false)
-        : await api(
-            (aiVisuals ? "/ai/exports/pptx" : "/exports/pptx") + "?design_style=" + presentationStyle,
-            jsonBody(content),
-          );
+        : paidMode
+          ? await api("/presentations/export?design_style=" + presentationStyle, jsonBody(payload))
+          : await api("/exports/pptx?design_style=" + presentationStyle, jsonBody(content));
       await downloadResponse(
-        response,
-        "MAGHRABI-" + (format === "docx" ? "document" : "presentation") + "." + format,
+        response, "MAGHRABI-" + (format === "docx" ? "document" : "presentation") + "." + format,
       );
-      setNotice(aiVisuals
-        ? "تم تنزيل العرض بتصاميم Nano Banana. النصوص والأشكال قابلة للتحرير؛ الصور المولدة عناصر صور منفصلة."
-        : "تم تجهيز الملف وتنزيله. راجع تنسيقه النهائي في Office.");
+      setNotice("تم تنزيل الملف. معاينة PowerPoint تستخدم محرك التصدير نفسه، وتبقى النصوص والأشكال قابلة للتحرير.");
     });
   }
   function saveDesignTemplate() {
