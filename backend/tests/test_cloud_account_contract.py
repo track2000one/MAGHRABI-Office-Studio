@@ -37,6 +37,10 @@ def test_mutations_require_the_studio_client_header(client):
 
 def test_account_routes_are_mounted_in_the_production_application():
     from app.main import app
-    mounted = {route.path for route in app.routes}
-    assert "/api/v1/account/status" in mounted
-    assert "/api/v1/projects" in mounted
+    # Verify real routing instead of introspecting FastAPI's internal router wrappers.
+    with TestClient(app) as client:
+        status = client.get("/api/v1/account/status")
+        projects = client.get("/api/v1/projects")
+    assert status.status_code == 200
+    assert status.json()["available"] is True
+    assert projects.status_code == 401
