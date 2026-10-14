@@ -282,23 +282,81 @@ describe("Office Studio workflows", () => {
     expect(vi.mocked(fetch).mock.calls.every(([url]) => !String(url).includes("/ai/exports/pptx"))).toBe(true);
   });
 
-  it("uses the authenticated AI image export only when explicitly selected", async () => {
+  it("renders real PPTX pages from the export engine with per-page navigation", async () => {
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:real-pptx-preview");
+    URL.revokeObjectURL = vi.fn();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(
+      new Blob(["pdf preview"], {type: "application/pdf"}),
+      {status: 200, headers: {"Content-Type": "application/pdf", "X-Preview-Pages": "5"}},
+    ));
+    await user.click(screen.getByRole("button", {name: "معاينة العرض الفعلية قبل التنزيل"}));
+    expect(await screen.findByTitle("شرائح PowerPoint الفعلية")).toHaveAttribute(
+      "src", expect.stringContaining("blob:real-pptx-preview"),
+    );
+    await user.selectOptions(screen.getByLabelText("رقم الشريحة في المعاينة الفعلية"), "2");
+    expect(screen.getByTitle("شرائح PowerPoint الفعلية")).toHaveAttribute(
+      "src", expect.stringContaining("page=3"),
+    );
+    expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+      String(url).includes("/presentations/preview?design_style=luxury"))).toBe(true);
+  });
+
+  it("reuses cached Nano Banana artwork in preview and export without second paid call", async () => {
     vi.stubGlobal("fetch", vi.fn(async () =>
-      new Response(JSON.stringify({ configured: true, authenticated: true }), {status: 200}),
+      new Response(JSON.stringify({configured: true, authenticated: true}), {status: 200}),
     ));
     const user = await openExample();
-    URL.createObjectURL = vi.fn(() => "blob:visual-pptx");
+    URL.createObjectURL = vi.fn(() => "blob:visual-deck");
     URL.revokeObjectURL = vi.fn();
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     await user.selectOptions(screen.getByLabelText("محرك التصميم البصري"), "nano_banana");
-    await user.selectOptions(screen.getByLabelText("طابع تصميم PowerPoint"), "corporate");
-    vi.mocked(fetch).mockResolvedValueOnce(new Response("pptx-with-art", {status: 200}));
-    await user.click(screen.getByRole("button", {name: "تنزيل PowerPoint"}));
+    const artwork = "data:image/jpeg;base64,YWJj";
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      cover: artwork, section: artwork,
+    }), {status: 200}));
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(new Blob(["pdf"], {type:"application/pdf"}), {
+      status:200, headers:{"Content-Type":"application/pdf","X-Preview-Pages":"5"},
+    }));
+    await user.click(screen.getByRole("button", {name:/إنشاء التصميم الكامل/}));
+    expect(await screen.findByTitle("شرائح PowerPoint الفعلية")).toBeVisible();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("editable-pptx", {status:200}));
+    await user.click(screen.getByRole("button", {name:"تنزيل PowerPoint"}));
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) =>
-      String(url).includes("/ai/exports/pptx?design_style=corporate") &&
-      new Headers(init?.headers).get("X-Maghrabi-Client") === "studio",
+      String(url).includes("/presentations/export?design_style=luxury") &&
+      JSON.stringify(JSON.parse(String(init?.body))).includes(artwork),
     )).toBe(true));
-    expect(screen.getByText(/الصور المولدة عناصر صور منفصلة/)).toBeVisible();
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) =>
+      String(url).includes("/ai/presentations/generate-artwork"))).toHaveLength(1);
+  });
+
+  it("redesigns just selected page and uses one paid image call", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({configured: true, authenticated: true}), {status: 200}),
+    ));
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:slide-viewer");
+    URL.revokeObjectURL = vi.fn();
+    await user.selectOptions(screen.getByLabelText("محرك التصميم البصري"), "nano_banana");
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(new Blob(["pdf"], {type: "application/pdf"}), {
+      headers: {"Content-Type": "application/pdf", "X-Preview-Pages": "5"},
+    }));
+    await user.click(screen.getByRole("button", {name: "معاينة العرض الفعلية قبل التنزيل"}));
+    await user.selectOptions(screen.getByLabelText("رقم الشريحة في المعاينة الفعلية"), "3");
+    await user.type(screen.getByLabelText("توجيه تصميم الشريحة المختارة (اختياري)"), "art deco");
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(new Blob(["jpeg-data"], {type: "image/jpeg"}), {
+      headers: {"Content-Type": "image/jpeg"},
+    }));
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(new Blob(["pdf2"], {type: "application/pdf"}), {
+      headers: {"Content-Type": "application/pdf", "X-Preview-Pages": "5"},
+    }));
+    await user.click(screen.getByRole("button", {name:/إعادة تصميم الشريحة 4 فقط/}));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) =>
+      String(url).includes("/ai/presentations/redesign-slide") &&
+      JSON.parse(String(init?.body)).slide_index === 3 &&
+      JSON.parse(String(init?.body)).direction === "art deco",
+    )).toBe(true));
+    expect(await screen.findByText(/تم تغيير التصميم البصري للشريحة 4 فقط/)).toBeVisible();
   });
 
   it("exports a selected luxury Word document theme with native editable DOCX endpoint", async () => {
