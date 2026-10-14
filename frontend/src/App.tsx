@@ -293,6 +293,8 @@ export default function App() {
     setContent(null);
     setPrevious(null);
     setStage("topic");
+    // Starting a new project must never inherit a previously selected paid image mode.
+    setPresentationVisualMode("editable");
     setSettings((s) => ({ ...s, format, topic: "", reference_text: "" }));
     setView(format);
     setSaveStatus("idle");
