@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import base64
 from typing import Literal
 from pathlib import Path
 import json
@@ -18,7 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
 from . import ai, ai_session
 from .exports import export_docx, export_pptx, format_docx
-from .presentation_visuals import generate_visual_assets
+from .presentation_visuals import generate_visual_assets, generate_slide_artwork
+from .presentation_payload import PresentationRenderRequest, compose_presentation
+from .presentation_preview import render_presentation_preview
 from .word_preview import render_word_preview
 from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
@@ -321,6 +324,59 @@ def nano_banana_pptx_export(
     assets = generate_visual_assets(content, design_style)
     return download(export_pptx(content, design_style, assets), 'pptx',
                     'MAGHRABI-Nano-Banana-presentation')
+
+
+
+class OneSlideDesignRequest(BaseModel):
+    content: Content
+    design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury'
+    slide_index: int = Field(ge=0, le=79)
+    direction: str = Field(default="", max_length=250)
+
+
+@app.post('/api/v1/presentations/preview')
+def pptx_real_preview(
+    payload: PresentationRenderRequest,
+    design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury',
+):
+    """Render precisely the PPTX that would be downloaded, without any AI calls."""
+    return render_presentation_preview(compose_presentation(payload, design_style))
+
+
+@app.post('/api/v1/presentations/export')
+def pptx_rendered_export(
+    payload: PresentationRenderRequest,
+    design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury',
+):
+    """Export selected cached artwork alongside independent editable text/shapes."""
+    return download(compose_presentation(payload, design_style), 'pptx',
+                    'MAGHRABI-custom-presentation')
+
+
+@app.post('/api/v1/ai/presentations/generate-artwork')
+def pptx_generate_artwork(request: Request, content: Content,
+                          design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury',
+                          authorization: str | None = Header(default=None)):
+    """Paid action, two generated images returned for exact preview/export reuse."""
+    _require_ai_access(request, authorization)
+    assets = generate_visual_assets(content, design_style)
+    return {
+        "cover": "data:image/jpeg;base64," + base64.b64encode(assets["cover"]).decode("ascii"),
+        "section": "data:image/jpeg;base64," + base64.b64encode(assets["section"]).decode("ascii"),
+    }
+
+
+@app.post('/api/v1/ai/presentations/redesign-slide')
+def pptx_redesign_slide(request: Request, payload: OneSlideDesignRequest,
+                        authorization: str | None = Header(default=None)):
+    """Replace artwork on exactly one chosen PPTX page, one image call."""
+    _require_ai_access(request, authorization)
+    result = generate_slide_artwork(payload.content, payload.design_style,
+                                    payload.slide_index, payload.direction)
+    return Response(
+        result, media_type="image/jpeg",
+        headers={"Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @app.post('/api/v1/files/format-docx')
