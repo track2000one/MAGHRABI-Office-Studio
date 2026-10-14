@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, downloadResponse, example, jsonBody } from "./api";
 import type { Content, DocumentType, Format, RequestSettings, Section } from "./api";
 import PdfStudio from "./PdfStudio";
+import {blankArtwork, deleteArtwork, fileToDataUrl, presentationSignature, readArtwork, renderArtwork, saveArtwork} from "./presentationArtwork";
+import type {SlideArtwork} from "./presentationArtwork";
 
 type Page = "home" | "create" | "files" | "pdf" | "projects" | "settings";
 type Analysis = {
@@ -199,6 +201,11 @@ export default function App() {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState("");
   const [wordPagePreview, setWordPagePreview] = useState<{url: string; fingerprint: string; pages: number} | null>(null);
+  const [pptxPagePreview, setPptxPagePreview] = useState<{url: string; fingerprint: string; pages: number} | null>(null);
+  const [currentSlidePage, setCurrentSlidePage] = useState(0);
+  const [slideDesignInstruction, setSlideDesignInstruction] = useState("");
+  const [artwork, setArtwork] = useState<SlideArtwork>(blankArtwork);
+  const [artworkReady, setArtworkReady] = useState(false);
   const [projects, setProjects] = useState<Project[]>(readProjects);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -235,6 +242,27 @@ export default function App() {
   useEffect(() => () => {
     if (wordPagePreview?.url) URL.revokeObjectURL(wordPagePreview.url);
   }, [wordPagePreview]);
+  useEffect(() => () => {
+    if (pptxPagePreview?.url) URL.revokeObjectURL(pptxPagePreview.url);
+  }, [pptxPagePreview]);
+  useEffect(() => {
+    let mounted = true;
+    setArtworkReady(false);
+    setPptxPagePreview(null);
+    setCurrentSlidePage(0);
+    if (!activeProjectId) {
+      setArtwork(blankArtwork());
+      setArtworkReady(true);
+      return () => {mounted = false;};
+    }
+    void readArtwork(activeProjectId).then((saved) => {
+      if (mounted) {
+        setArtwork(saved);
+        setArtworkReady(true);
+      }
+    });
+    return () => {mounted = false;};
+  }, [activeProjectId]);
   useEffect(() => {
     // Discard legacy plaintext credentials previously saved in sessionStorage.
     sessionStorage.removeItem("maghrabi-office-access-token-v1");
@@ -410,6 +438,19 @@ export default function App() {
     setSelected(0);
   }
   // Invalidate the rendered PDF when content or any design input changes.
+  const usableArtwork = content
+    ? renderArtwork(artwork, content, presentationVisualMode === "nano_banana")
+    : {slides: {} as Record<string, string>};
+  const artworkCount = Number(Boolean(usableArtwork.cover)) +
+    Number(Boolean(usableArtwork.section)) + Object.keys(usableArtwork.slides).length;
+  const pptxPreviewFingerprint = JSON.stringify({
+    content, presentationStyle, presentationVisualMode,
+    artworkRevision: artworkCount ? artwork.revision : "",
+  });
+  const validPptxPreview = pptxPagePreview?.fingerprint === pptxPreviewFingerprint ? pptxPagePreview : null;
+  const visualsOutdated = presentationVisualMode === "nano_banana" &&
+    artwork.revision !== "" && !!content && artwork.signature !== presentationSignature(content);
+
   const wordPreviewFingerprint = JSON.stringify({
     content, brand, layout, documentStyle, documentType: settings.document_type,
     logo: logoFile && [logoFile.name, logoFile.size, logoFile.lastModified],
