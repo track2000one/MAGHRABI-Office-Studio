@@ -8,6 +8,22 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: studio_test
+          POSTGRES_PASSWORD: studio_test_only
+          POSTGRES_DB: maghrabi_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U studio_test -d maghrabi_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://studio_test:studio_test_only@localhost:5432/maghrabi_ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

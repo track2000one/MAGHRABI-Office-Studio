@@ -32,7 +32,8 @@ export async function api(path: string, init: RequestInit = {}) {
   const timer = window.setTimeout(() => controller.abort(), 120_000);
   try {
     const headers = new Headers(init.headers);
-    if (path.startsWith("/ai/") && init.method?.toUpperCase() === "POST")
+    if (["/ai/", "/account/", "/projects"].some((prefix) => path.startsWith(prefix)) &&
+        ["POST", "PUT", "PATCH", "DELETE"].includes(init.method?.toUpperCase() || ""))
       headers.set("X-Maghrabi-Client", "studio");
     const response = await fetch(`${base}/api/v1${path}`, {
       ...init,

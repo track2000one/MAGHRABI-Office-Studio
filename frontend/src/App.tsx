@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, downloadResponse, example, jsonBody } from "./api";
 import type { Content, DocumentType, Format, RequestSettings, Section } from "./api";
 import PdfStudio from "./PdfStudio";
+import {CloudProjectsPanel, useCloudWorkspace} from "./CloudProjects";
+import type {CloudRecord} from "./CloudProjects";
 
 type Page = "home" | "create" | "files" | "pdf" | "projects" | "settings";
 type Analysis = {
@@ -198,6 +200,8 @@ export default function App() {
   const [logoPreview, setLogoPreview] = useState("");
   const [wordPagePreview, setWordPagePreview] = useState<{url: string; fingerprint: string; pages: number} | null>(null);
   const [projects, setProjects] = useState<Project[]>(readProjects);
+  const cloud = useCloudWorkspace();
+  const [projectSource, setProjectSource] = useState<"local" | "cloud">("local");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [projectQuery, setProjectQuery] = useState("");
@@ -287,6 +291,7 @@ export default function App() {
     }
   }
   function start(format: Format) {
+    setProjectSource(cloud.account?.authenticated ? "cloud" : "local");
     setActiveProjectId(null);
     setContent(null);
     setPrevious(null);
@@ -297,6 +302,7 @@ export default function App() {
     setPage("create");
   }
   function manual() {
+    setProjectSource(cloud.account?.authenticated ? "cloud" : "local");
     setActiveProjectId(crypto.randomUUID());
     setContent({
       title: settings.topic,
@@ -348,7 +354,10 @@ export default function App() {
           )
         ).json();
         setPrevious(content);
-        if (!activeProjectId) setActiveProjectId(crypto.randomUUID());
+        if (!activeProjectId) {
+          setProjectSource(cloud.account?.authenticated ? "cloud" : "local");
+          setActiveProjectId(crypto.randomUUID());
+        }
         setContent(data);
         setStage(phase === "outline" ? "outline" : "edit");
         setSelected(0);
@@ -582,24 +591,68 @@ export default function App() {
     }
   }
 
-  function saveProject() {
-    if (!content) return;
-    persistProject(false);
+  function cloudSnapshot(id: string): CloudRecord | null {
+    if (!content) return null;
+    const existing = cloud.projects.find(p => p.id === id);
+    const now = new Date().toISOString();
+    return {
+      id, date: existing?.date || now, updatedAt: now,
+      version: existing?.version || 0,
+      content: structuredClone(content),
+      format: settings.format,
+      stage: stage === "outline" ? "outline" : "edit",
+      context: {
+        source_mode: settings.source_mode, reference_text: settings.reference_text,
+        document_type: settings.document_type, branding: {...brand},
+        layout: {...layout}, documentStyle, presentationStyle,
+      },
+    };
   }
-
-  // Automatic drafts include incomplete sections; validation is reserved for exports.
-  // Every revision updates its original project ID rather than creating duplicates.
+  async function persistCloudProject(silent: boolean, forceNew = false) {
+    if (!content) return;
+    if (!cloud.account?.authenticated) {
+      setSaveStatus("error");
+      setError("انتهت جلسة الحساب السحابي. سجّل الدخول مجددًا، ولا تغلق الصفحة قبل حفظ التعديلات.");
+      return;
+    }
+    const id = forceNew || !activeProjectId ? crypto.randomUUID() : activeProjectId;
+    const snapshot = cloudSnapshot(id);
+    if (!snapshot) return;
+    setSaveStatus("saving");
+    try {
+      await cloud.save(forceNew ? {...snapshot, version:0} : snapshot);
+      if (activeProjectId !== id) setActiveProjectId(id);
+      setSaveStatus("saved");
+      if (!silent) setNotice(forceNew ? "تم حفظ نسخة مستقلة في حسابك السحابي." : "تم حفظ المشروع في حسابك السحابي.");
+      setError("");
+    } catch(e) {
+      setSaveStatus("error");
+      setError(e instanceof Error ? e.message : "فشل حفظ المشروع في السحابة. احتفظ بالتعديلات قبل إغلاق الصفحة.");
+    }
+  }
+  function saveProject() {
+    if (projectSource === "cloud") void persistCloudProject(false);
+    else persistProject(false);
+  }
+  function saveIndependentProject() {
+    if (projectSource === "cloud") void persistCloudProject(false,true);
+    else persistProject(false,true);
+  }
+  // Local drafts stay local; authenticated cloud drafts are saved to their owner only.
   useEffect(() => {
     if (!content || !activeProjectId || (stage !== "edit" && stage !== "outline")) return;
     setSaveStatus("saving");
-    const handle = window.setTimeout(() => persistProject(true), 450);
+    const handle = window.setTimeout(() => {
+      if (projectSource === "cloud") void persistCloudProject(true);
+      else persistProject(true);
+    }, 650);
     return () => window.clearTimeout(handle);
-  }, [activeProjectId, content, stage, settings, brand, layout, documentStyle, presentationStyle]);
+  }, [activeProjectId, content, stage, settings, brand, layout, documentStyle, presentationStyle, projectSource]);
 
   // Flush the newest draft when a tab is hidden or closed between debounce cycles.
   const flushDraftRef = useRef<() => void>(() => {});
   flushDraftRef.current = () => {
-    if (!content || !activeProjectId) return;
+    if (projectSource === "cloud" || !content || !activeProjectId) return;
     try {
       const existing = readProjects();
       const old = existing.find((p) => p.id === activeProjectId);
@@ -621,6 +674,76 @@ export default function App() {
     window.addEventListener("pagehide", flush);
     return () => window.removeEventListener("pagehide", flush);
   }, []);
+
+  function openProjectRecord(raw: CloudRecord, source: "local" | "cloud") {
+    if (!isContent(raw.content)) {
+      setError("تعذر فتح المشروع: محتوى المشروع غير صالح.");
+      return;
+    }
+    const p = raw as Project;
+    const format = p.format || (p.context?.document_type && p.context.document_type !== "general" ? "docx" : "pptx");
+    setProjectSource(source);
+    setActiveProjectId(p.id);
+    setSaveStatus("saved");
+    setContent(structuredClone(p.content));
+    setSettings({
+      ...initial, format, topic: p.content.title, language: p.content.language,
+      source_mode: p.context?.source_mode === "reference" ? "reference" : "general",
+      reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : "",
+      document_type: p.context?.document_type && Object.keys(documentTypeLabels).includes(p.context.document_type)
+        ? p.context.document_type : "general",
+    });
+    setBrand(p.context?.branding && typeof p.context.branding === "object"
+      ? {...emptyBrandFields, ...p.context.branding} : emptyBrandFields);
+    setLogoFile(null);
+    setLayout(p.context?.layout ? {...defaultLayout, ...p.context.layout} : defaultLayout);
+    setDocumentStyle(p.context?.documentStyle && ["luxury","corporate","minimal"].includes(p.context.documentStyle)
+      ? p.context.documentStyle : "luxury");
+    setPresentationStyle(p.context?.presentationStyle && ["luxury","corporate","minimal"].includes(p.context.presentationStyle)
+      ? p.context.presentationStyle : "luxury");
+    setPrevious(null);
+    setStage(p.stage === "outline" ? "outline" : "edit");
+    setSelected(0);
+    setView(format);
+    setPage("create");
+  }
+
+  async function importLocalToCloud(items: CloudRecord[]) {
+    if (!cloud.account?.authenticated) throw new Error("يجب تسجيل الدخول أولًا.");
+    let completed = 0;
+    let skipped = 0;
+    const already = new Set(cloud.projects.map(p=>p.id));
+    for (const p of items) {
+      if (!isContent(p.content)) {skipped++;continue;}
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(p.id);
+      const id = isUuid ? p.id : crypto.randomUUID();
+      if (already.has(id)) {skipped++;continue;}
+      await cloud.save({...p, id, version:0,
+        date: p.date || new Date().toISOString(), updatedAt: p.updatedAt || p.date,
+        format: p.format || "pptx"});
+      already.add(id);
+      completed++;
+    }
+    await cloud.refresh();
+    setNotice("تم نقل " + completed + " مشروع إلى حسابك السحابي، وتخطي " + skipped +
+      " مشروع موجود أو غير صالح. بقيت النسخ المحلية دون حذف.");
+  }
+
+  function downloadActiveProjectBackup() {
+    if (!content || !activeProjectId) return;
+    const snapshot = cloudSnapshot(activeProjectId);
+    if (!snapshot) return;
+    const data = JSON.stringify({
+      kind: "maghrabi-office-project-backup", version: 1,
+      exportedAt: new Date().toISOString(), projects: [snapshot],
+    }, null, 2);
+    const url = URL.createObjectURL(new Blob([data], {type: "application/json"}));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "MAGHRABI-unsaved-project-backup.json";
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
 
   function exportProjectBackup() {
     if (!projects.length) return;
@@ -1124,6 +1247,7 @@ export default function App() {
                     className="text-button"
                     disabled={!!busy}
                     onClick={() => {
+                      setProjectSource(cloud.account?.authenticated ? "cloud" : "local");
                       setActiveProjectId(crypto.randomUUID());
                       setContent(structuredClone(example));
                       setSettings({...initial, format: settings.format, document_type: settings.document_type});
@@ -1160,10 +1284,18 @@ export default function App() {
                       </p>
                       <p className="small muted" role="status">
                         {saveStatus === "saving" ? "جارٍ حفظ المشروع تلقائيًا…" :
-                         saveStatus === "saved" ? "تم حفظ المشروع تلقائيًا في «مشاريعي»" :
-                         saveStatus === "error" ? "تعذر الحفظ التلقائي؛ راجع رسالة الخطأ." :
+                         saveStatus === "saved" ? (projectSource === "cloud"
+                           ? "تم حفظ المشروع تلقائيًا في حسابك السحابي"
+                           : "تم حفظ المشروع تلقائيًا في «مشاريعي»") :
+                         saveStatus === "error" ? "تعذر الحفظ التلقائي؛ راجع رسالة الخطأ ولا تغلق الصفحة." :
                          "سيُحفظ المشروع تلقائيًا أثناء العمل."}
                       </p>
+                      {saveStatus === "error" && projectSource === "cloud" && (
+                        <button type="button" className="button outline"
+                          onClick={downloadActiveProjectBackup}>
+                          تنزيل نسخة احتياطية من التعديلات غير المحفوظة
+                        </button>
+                      )}
                     </div>
                     <button
                       className="button outline"
@@ -1747,7 +1879,7 @@ export default function App() {
                             <button
                               className="text-button"
                               disabled={!!busy}
-                              onClick={() => persistProject(false, true)}
+                              onClick={saveIndependentProject}
                             >
                               حفظ نسخة مستقلة
                             </button>
@@ -1919,10 +2051,13 @@ export default function App() {
         {page === "pdf" && <PdfStudio />}
         {page === "projects" && (
           <>
+            <CloudProjectsPanel cloud={cloud} localProjects={projects}
+              onOpen={p=>openProjectRecord(p, "cloud")}
+              onImport={importLocalToCloud} />
             <div className="soft-note">
-              تُحفظ مشاريع Word وPowerPoint والتعديلات تلقائيًا في هذه الصفحة على المتصفح الحالي.
-              يمكن إعادة فتح أي مشروع واستكمال العمل عليه. وللانتقال إلى جهاز آخر،
-              استخدم النسخة الاحتياطية؛ لم يُفعّل التخزين السحابي للحسابات بعد.
+              <strong>المشاريع المحلية في هذا المتصفح</strong> — تبقى مستقلة عن حسابك السحابي
+              ولا تُرفع إلى الخادم دون اختيارك. استخدم زر النقل إلى السحابة بعد تسجيل الدخول،
+              أو صدّر نسخة احتياطية للاحتفاظ بها محليًا.
             </div>
             <div className="panel project-library-toolbar">
               <div className="project-library-fields">
@@ -1982,23 +2117,7 @@ export default function App() {
                     <div className="action-row">
                       <button
                         className="button outline"
-                        onClick={() => {
-                          setActiveProjectId(p.id);
-                          setSaveStatus("saved");
-                          setContent(structuredClone(p.content));
-                          setSettings({...initial, format: p.format || "pptx", topic: p.content.title, language: p.content.language, source_mode: p.context?.source_mode === "reference" ? "reference" : "general", reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : "", document_type: p.context?.document_type && Object.keys(documentTypeLabels).includes(p.context.document_type) ? p.context.document_type : "general" });
-                          setBrand(p.context?.branding && typeof p.context.branding === "object"
-                            ? { ...emptyBrandFields, ...p.context.branding } : emptyBrandFields);
-                          setLogoFile(null);
-                          setLayout(p.context?.layout ? { ...defaultLayout, ...p.context.layout } : defaultLayout);
-                          setDocumentStyle(p.context?.documentStyle && ["luxury", "corporate", "minimal"].includes(p.context.documentStyle) ? p.context.documentStyle : "luxury");
-                          setPresentationStyle(p.context?.presentationStyle && ["luxury", "corporate", "minimal"].includes(p.context.presentationStyle) ? p.context.presentationStyle : "luxury");
-                          setPrevious(null);
-                          setStage(p.stage === "outline" ? "outline" : "edit");
-                          setSelected(0);
-                          setView(p.format || (p.context?.document_type && p.context.document_type !== "general" ? "docx" : "pptx"));
-                          setPage("create");
-                        }}
+                        onClick={() => openProjectRecord(p, "local")}
                       >
                         فتح وتحرير
                       </button>
