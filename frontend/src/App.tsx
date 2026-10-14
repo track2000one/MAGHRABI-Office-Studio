@@ -675,6 +675,60 @@ export default function App() {
     return () => window.removeEventListener("pagehide", flush);
   }, []);
 
+  function openProjectRecord(raw: CloudRecord, source: "local" | "cloud") {
+    if (!isContent(raw.content)) {
+      setError("تعذر فتح المشروع: محتوى المشروع غير صالح.");
+      return;
+    }
+    const p = raw as Project;
+    const format = p.format || (p.context?.document_type && p.context.document_type !== "general" ? "docx" : "pptx");
+    setProjectSource(source);
+    setActiveProjectId(p.id);
+    setSaveStatus("saved");
+    setContent(structuredClone(p.content));
+    setSettings({
+      ...initial, format, topic: p.content.title, language: p.content.language,
+      source_mode: p.context?.source_mode === "reference" ? "reference" : "general",
+      reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : "",
+      document_type: p.context?.document_type && Object.keys(documentTypeLabels).includes(p.context.document_type)
+        ? p.context.document_type : "general",
+    });
+    setBrand(p.context?.branding && typeof p.context.branding === "object"
+      ? {...emptyBrandFields, ...p.context.branding} : emptyBrandFields);
+    setLogoFile(null);
+    setLayout(p.context?.layout ? {...defaultLayout, ...p.context.layout} : defaultLayout);
+    setDocumentStyle(p.context?.documentStyle && ["luxury","corporate","minimal"].includes(p.context.documentStyle)
+      ? p.context.documentStyle : "luxury");
+    setPresentationStyle(p.context?.presentationStyle && ["luxury","corporate","minimal"].includes(p.context.presentationStyle)
+      ? p.context.presentationStyle : "luxury");
+    setPrevious(null);
+    setStage(p.stage === "outline" ? "outline" : "edit");
+    setSelected(0);
+    setView(format);
+    setPage("create");
+  }
+
+  async function importLocalToCloud(items: CloudRecord[]) {
+    if (!cloud.account?.authenticated) throw new Error("يجب تسجيل الدخول أولًا.");
+    let completed = 0;
+    let skipped = 0;
+    const already = new Set(cloud.projects.map(p=>p.id));
+    for (const p of items) {
+      if (!isContent(p.content)) {skipped++;continue;}
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(p.id);
+      const id = isUuid ? p.id : crypto.randomUUID();
+      if (already.has(id)) {skipped++;continue;}
+      await cloud.save({...p, id, version:0,
+        date: p.date || new Date().toISOString(), updatedAt: p.updatedAt || p.date,
+        format: p.format || "pptx"});
+      already.add(id);
+      completed++;
+    }
+    await cloud.refresh();
+    setNotice("تم نقل " + completed + " مشروع إلى حسابك السحابي، وتخطي " + skipped +
+      " مشروع موجود أو غير صالح. بقيت النسخ المحلية دون حذف.");
+  }
+
   function exportProjectBackup() {
     if (!projects.length) return;
     const data = JSON.stringify({
@@ -1973,10 +2027,13 @@ export default function App() {
         {page === "pdf" && <PdfStudio />}
         {page === "projects" && (
           <>
+            <CloudProjectsPanel cloud={cloud} localProjects={projects}
+              onOpen={p=>openProjectRecord(p, "cloud")}
+              onImport={importLocalToCloud} />
             <div className="soft-note">
-              تُحفظ مشاريع Word وPowerPoint والتعديلات تلقائيًا في هذه الصفحة على المتصفح الحالي.
-              يمكن إعادة فتح أي مشروع واستكمال العمل عليه. وللانتقال إلى جهاز آخر،
-              استخدم النسخة الاحتياطية؛ لم يُفعّل التخزين السحابي للحسابات بعد.
+              <strong>المشاريع المحلية في هذا المتصفح</strong> — تبقى مستقلة عن حسابك السحابي
+              ولا تُرفع إلى الخادم دون اختيارك. استخدم زر النقل إلى السحابة بعد تسجيل الدخول،
+              أو صدّر نسخة احتياطية للاحتفاظ بها محليًا.
             </div>
             <div className="panel project-library-toolbar">
               <div className="project-library-fields">
@@ -2036,23 +2093,7 @@ export default function App() {
                     <div className="action-row">
                       <button
                         className="button outline"
-                        onClick={() => {
-                          setActiveProjectId(p.id);
-                          setSaveStatus("saved");
-                          setContent(structuredClone(p.content));
-                          setSettings({...initial, format: p.format || "pptx", topic: p.content.title, language: p.content.language, source_mode: p.context?.source_mode === "reference" ? "reference" : "general", reference_text: typeof p.context?.reference_text === "string" ? p.context.reference_text.slice(0,16000) : "", document_type: p.context?.document_type && Object.keys(documentTypeLabels).includes(p.context.document_type) ? p.context.document_type : "general" });
-                          setBrand(p.context?.branding && typeof p.context.branding === "object"
-                            ? { ...emptyBrandFields, ...p.context.branding } : emptyBrandFields);
-                          setLogoFile(null);
-                          setLayout(p.context?.layout ? { ...defaultLayout, ...p.context.layout } : defaultLayout);
-                          setDocumentStyle(p.context?.documentStyle && ["luxury", "corporate", "minimal"].includes(p.context.documentStyle) ? p.context.documentStyle : "luxury");
-                          setPresentationStyle(p.context?.presentationStyle && ["luxury", "corporate", "minimal"].includes(p.context.presentationStyle) ? p.context.presentationStyle : "luxury");
-                          setPrevious(null);
-                          setStage(p.stage === "outline" ? "outline" : "edit");
-                          setSelected(0);
-                          setView(p.format || (p.context?.document_type && p.context.document_type !== "general" ? "docx" : "pptx"));
-                          setPage("create");
-                        }}
+                        onClick={() => openProjectRecord(p, "local")}
                       >
                         فتح وتحرير
                       </button>
