@@ -77,7 +77,7 @@ def test_visual_mode_requires_ai_login_and_preserves_all_native_text(monkeypatch
         assert "تطوير الإجراءات وقياس النتائج الفعلية." in _shapes_text(deck)
         assert deck.slides[-1].notes_slide.notes_text_frame.text == "ملاحظات خاصة لا تُرسل."
         pictures = [shape for slide in deck.slides for shape in slide.shapes if shape.shape_type == 13]
-        assert len(pictures) == 2
+        assert len(pictures) >= 3  # cover, soft content backdrop, and inline editorial artwork
         assert all(pic.has_text_frame is False for pic in pictures)
 
 
