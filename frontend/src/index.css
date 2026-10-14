@@ -2024,3 +2024,46 @@ textarea::placeholder {
   .project-library-fields { grid-template-columns: 1fr; }
   .project-library-actions .button { width:100%; }
 }
+
+
+/* Exact PPTX preview + local AI-artwork editing. Native 16:9 is rendered into PDF. */
+.pptx-real-preview {
+  min-width: 0;
+  border: 1px solid #d7e2e9;
+  border-radius: 13px;
+  background: #edf2f5;
+  overflow: hidden;
+}
+.pptx-preview-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  padding: 11px 12px;
+  gap: 11px;
+  background: #f7f9fb;
+}
+.pptx-preview-nav .button { width: auto; padding: 8px 14px; min-height: 37px; }
+.pptx-preview-nav label { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.pptx-preview-nav select { max-width: 110px; min-width: 75px; }
+.pptx-real-preview .word-preview-pdf-frame { min-height: 380px; height: min(62vh, 610px); }
+.pptx-real-preview > p { padding: 9px 13px; margin: 0; }
+.pptx-design-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  margin: 12px 0 20px;
+  padding: 18px;
+  border: 1px solid #d9e0eb;
+  border-radius: 13px;
+  background: #f8fafc;
+}
+.pptx-design-tools h3 { margin: 0; font-size: 17px; color: #17354d; }
+.pptx-design-tools label { font-weight: 600; color: #244458; }
+.pptx-design-tools .button { width: 100%; }
+.pptx-design-tools p { margin: 0; line-height: 1.65; }
+@media (max-width: 600px) {
+  .pptx-design-tools { padding: 12px; }
+  .pptx-real-preview .word-preview-pdf-frame { height: 57vh; min-height: 310px; }
+}
