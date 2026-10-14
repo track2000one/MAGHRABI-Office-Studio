@@ -51,7 +51,10 @@ export function useCloudWorkspace() {
       return unsigned;
     }
   }
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    const pending = window.setTimeout(() => { void refresh(); }, 0);
+    return () => window.clearTimeout(pending);
+  }, []);
 
   async function action(path: string, payload: object) {
     setBusy(true);
