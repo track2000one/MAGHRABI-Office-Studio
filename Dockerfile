@@ -7,10 +7,10 @@ RUN npm run build
 
 FROM python:3.12-slim
 WORKDIR /app
-# LibreOffice renders the exact generated DOCX pages to PDF, with Arabic glyph
-# shaping and a bundled fallback font. Conversion runs as unprivileged studio.
+# LibreOffice Writer and Impress render generated DOCX/PPTX pages to PDF with
+# Arabic glyph shaping. Conversion runs as the unprivileged studio user.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libreoffice-writer fonts-noto-core fonts-liberation2 \
+    libreoffice-writer libreoffice-impress fonts-noto-core fonts-liberation2 \
     && rm -rf /var/lib/apt/lists/*
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app/backend
 COPY backend/requirements.txt /app/backend/requirements.txt
