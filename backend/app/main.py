@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
 from . import ai, ai_session
 from .exports import export_docx, export_pptx, format_docx
+from .presentation_visuals import generate_visual_assets
 from .word_preview import render_word_preview
 from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
@@ -306,6 +307,20 @@ async def docx_custom_export(
 @app.post('/api/v1/exports/pptx')
 def pptx_export(content: Content, design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury'):
     return download(export_pptx(content, design_style), 'pptx', 'MAGHRABI-presentation')
+
+
+@app.post('/api/v1/ai/exports/pptx')
+def nano_banana_pptx_export(
+    content: Content,
+    request: Request,
+    design_style: Literal['luxury', 'corporate', 'minimal'] = 'luxury',
+    authorization: str | None = Header(default=None),
+):
+    """Opt-in paid image generation. Two assets; all native text is editable."""
+    _require_ai_access(request, authorization)
+    assets = generate_visual_assets(content, design_style)
+    return download(export_pptx(content, design_style, assets), 'pptx',
+                    'MAGHRABI-Nano-Banana-presentation')
 
 
 @app.post('/api/v1/files/format-docx')
