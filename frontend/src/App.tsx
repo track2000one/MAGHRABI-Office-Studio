@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, downloadResponse, example, jsonBody } from "./api";
 import type { Content, DocumentType, Format, RequestSettings, Section } from "./api";
 import PdfStudio from "./PdfStudio";
+import {CloudProjectsPanel, useCloudWorkspace} from "./CloudProjects";
+import type {CloudRecord} from "./CloudProjects";
 
 type Page = "home" | "create" | "files" | "pdf" | "projects" | "settings";
 type Analysis = {
@@ -198,6 +200,8 @@ export default function App() {
   const [logoPreview, setLogoPreview] = useState("");
   const [wordPagePreview, setWordPagePreview] = useState<{url: string; fingerprint: string; pages: number} | null>(null);
   const [projects, setProjects] = useState<Project[]>(readProjects);
+  const cloud = useCloudWorkspace();
+  const [projectSource, setProjectSource] = useState<"local" | "cloud">("local");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [projectQuery, setProjectQuery] = useState("");
@@ -287,6 +291,7 @@ export default function App() {
     }
   }
   function start(format: Format) {
+    setProjectSource(cloud.account?.authenticated ? "cloud" : "local");
     setActiveProjectId(null);
     setContent(null);
     setPrevious(null);
@@ -297,6 +302,7 @@ export default function App() {
     setPage("create");
   }
   function manual() {
+    setProjectSource(cloud.account?.authenticated ? "cloud" : "local");
     setActiveProjectId(crypto.randomUUID());
     setContent({
       title: settings.topic,
@@ -348,7 +354,10 @@ export default function App() {
           )
         ).json();
         setPrevious(content);
-        if (!activeProjectId) setActiveProjectId(crypto.randomUUID());
+        if (!activeProjectId) {
+          setProjectSource(cloud.account?.authenticated ? "cloud" : "local");
+          setActiveProjectId(crypto.randomUUID());
+        }
         setContent(data);
         setStage(phase === "outline" ? "outline" : "edit");
         setSelected(0);
@@ -582,24 +591,68 @@ export default function App() {
     }
   }
 
-  function saveProject() {
-    if (!content) return;
-    persistProject(false);
+  function cloudSnapshot(id: string): CloudRecord | null {
+    if (!content) return null;
+    const existing = cloud.projects.find(p => p.id === id);
+    const now = new Date().toISOString();
+    return {
+      id, date: existing?.date || now, updatedAt: now,
+      version: existing?.version || 0,
+      content: structuredClone(content),
+      format: settings.format,
+      stage: stage === "outline" ? "outline" : "edit",
+      context: {
+        source_mode: settings.source_mode, reference_text: settings.reference_text,
+        document_type: settings.document_type, branding: {...brand},
+        layout: {...layout}, documentStyle, presentationStyle,
+      },
+    };
   }
-
-  // Automatic drafts include incomplete sections; validation is reserved for exports.
-  // Every revision updates its original project ID rather than creating duplicates.
+  async function persistCloudProject(silent: boolean, forceNew = false) {
+    if (!content) return;
+    if (!cloud.account?.authenticated) {
+      setSaveStatus("error");
+      setError("انتهت جلسة الحساب السحابي. سجّل الدخول مجددًا، ولا تغلق الصفحة قبل حفظ التعديلات.");
+      return;
+    }
+    const id = forceNew || !activeProjectId ? crypto.randomUUID() : activeProjectId;
+    const snapshot = cloudSnapshot(id);
+    if (!snapshot) return;
+    setSaveStatus("saving");
+    try {
+      await cloud.save(forceNew ? {...snapshot, version:0} : snapshot);
+      if (activeProjectId !== id) setActiveProjectId(id);
+      setSaveStatus("saved");
+      if (!silent) setNotice(forceNew ? "تم حفظ نسخة مستقلة في حسابك السحابي." : "تم حفظ المشروع في حسابك السحابي.");
+      setError("");
+    } catch(e) {
+      setSaveStatus("error");
+      setError(e instanceof Error ? e.message : "فشل حفظ المشروع في السحابة. احتفظ بالتعديلات قبل إغلاق الصفحة.");
+    }
+  }
+  function saveProject() {
+    if (projectSource === "cloud") void persistCloudProject(false);
+    else persistProject(false);
+  }
+  function saveIndependentProject() {
+    if (projectSource === "cloud") void persistCloudProject(false,true);
+    else persistProject(false,true);
+  }
+  // Local drafts stay local; authenticated cloud drafts are saved to their owner only.
   useEffect(() => {
     if (!content || !activeProjectId || (stage !== "edit" && stage !== "outline")) return;
     setSaveStatus("saving");
-    const handle = window.setTimeout(() => persistProject(true), 450);
+    const handle = window.setTimeout(() => {
+      if (projectSource === "cloud") void persistCloudProject(true);
+      else persistProject(true);
+    }, 650);
     return () => window.clearTimeout(handle);
-  }, [activeProjectId, content, stage, settings, brand, layout, documentStyle, presentationStyle]);
+  }, [activeProjectId, content, stage, settings, brand, layout, documentStyle, presentationStyle, projectSource]);
 
   // Flush the newest draft when a tab is hidden or closed between debounce cycles.
   const flushDraftRef = useRef<() => void>(() => {});
   flushDraftRef.current = () => {
-    if (!content || !activeProjectId) return;
+    if (projectSource === "cloud" || !content || !activeProjectId) return;
     try {
       const existing = readProjects();
       const old = existing.find((p) => p.id === activeProjectId);
@@ -1124,6 +1177,7 @@ export default function App() {
                     className="text-button"
                     disabled={!!busy}
                     onClick={() => {
+                      setProjectSource(cloud.account?.authenticated ? "cloud" : "local");
                       setActiveProjectId(crypto.randomUUID());
                       setContent(structuredClone(example));
                       setSettings({...initial, format: settings.format, document_type: settings.document_type});
@@ -1747,7 +1801,7 @@ export default function App() {
                             <button
                               className="text-button"
                               disabled={!!busy}
-                              onClick={() => persistProject(false, true)}
+                              onClick={saveIndependentProject}
                             >
                               حفظ نسخة مستقلة
                             </button>
