@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from io import BytesIO
 import re
 
@@ -44,7 +45,7 @@ def _decode_art(value: str) -> bytes:
             output = BytesIO()
             safe.save(output, format="JPEG", quality=83, optimize=True)
             return output.getvalue()
-    except (ValueError, OSError, UnidentifiedImageError) as exc:
+    except (ValueError, binascii.Error, OSError, UnidentifiedImageError) as exc:
         raise HTTPException(422, "تعذر قراءة صورة تصميم الشريحة.") from exc
 
 
