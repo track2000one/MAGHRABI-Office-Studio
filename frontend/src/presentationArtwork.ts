@@ -8,6 +8,8 @@ export type SlideArtwork = {
   revision: string;
 };
 
+export type RenderedArtwork = {cover?: string; section?: string; slides: Record<string, string>};
+
 const DATABASE = "maghrabi-pptx-artwork-v1";
 const STORE = "projects";
 const memoryFallback = new Map<string, SlideArtwork>();
@@ -24,7 +26,7 @@ export function presentationSignature(content: Content): string {
   });
 }
 
-export function renderArtwork(artwork: SlideArtwork, content: Content, enabled: boolean) {
+export function renderArtwork(artwork: SlideArtwork, content: Content, enabled: boolean): RenderedArtwork {
   if (!enabled || artwork.signature !== presentationSignature(content)) {
     return {slides: {} as Record<string, string>};
   }
