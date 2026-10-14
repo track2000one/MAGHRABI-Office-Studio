@@ -100,7 +100,7 @@ def test_gemini_image_request_contains_no_notes_or_body(monkeypatch):
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
         result = presentation_visuals._generate(client, "gemini-3-pro-image", "fake-key", prompt)
-    assert result.startswith(b"\\xff\\xd8")
+    assert result[:2] == bytes((0xFF, 0xD8))
     assert Image.open(BytesIO(result)).size == (1920, 1080)
     assert len(seen) == 1
     assert seen[0].headers["x-goog-api-key"] == "fake-key"
