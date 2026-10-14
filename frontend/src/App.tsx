@@ -74,6 +74,7 @@ type Project = {
     layout?: LayoutSettings;
     documentStyle?: "luxury" | "corporate" | "minimal";
     presentationStyle?: "luxury" | "corporate" | "minimal";
+    presentationVisualMode?: "editable" | "nano_banana";
   };
 };
 const STORAGE = "maghrabi-office-projects-v1";
@@ -188,6 +189,7 @@ export default function App() {
   const [selected, setSelected] = useState(0);
   const [view, setView] = useState<Format>("pptx");
   const [presentationStyle, setPresentationStyle] = useState<"luxury" | "corporate" | "minimal">("luxury");
+  const [presentationVisualMode, setPresentationVisualMode] = useState<"editable" | "nano_banana">("editable");
   const [documentStyle, setDocumentStyle] = useState<"luxury" | "corporate" | "minimal">("luxury");
   const [brand, setBrand] = useState<BrandFields>(emptyBrandFields);
   const [layout, setLayout] = useState<LayoutSettings>(defaultLayout);
@@ -475,16 +477,25 @@ export default function App() {
 
   async function exportFile(format: Format) {
     if (!content) return;
-    await run("جارٍ تجهيز الملف…", async () => {
+    const aiVisuals = format === "pptx" && presentationVisualMode === "nano_banana";
+    await run(aiVisuals ? "جارٍ تصميم الصور الاحترافية بواسطة Nano Banana Pro…" : "جارٍ تجهيز الملف…", async () => {
       validateContent(content);
+      if (aiVisuals && (status !== "ready" || !authorized)) {
+        throw new Error("لإنشاء الصور عبر Nano Banana Pro، سجّل الدخول أولًا من إعدادات الذكاء الاصطناعي.");
+      }
       const response = format === "docx"
         ? await requestWord(false)
-        : await api("/exports/pptx?design_style=" + presentationStyle, jsonBody(content));
+        : await api(
+            (aiVisuals ? "/ai/exports/pptx" : "/exports/pptx") + "?design_style=" + presentationStyle,
+            jsonBody(content),
+          );
       await downloadResponse(
         response,
         "MAGHRABI-" + (format === "docx" ? "document" : "presentation") + "." + format,
       );
-      setNotice("تم تجهيز الملف وتنزيله. راجع تنسيقه النهائي في Office.");
+      setNotice(aiVisuals
+        ? "تم تنزيل العرض بتصاميم Nano Banana. النصوص والأشكال قابلة للتحرير؛ الصور المولدة عناصر صور منفصلة."
+        : "تم تجهيز الملف وتنزيله. راجع تنسيقه النهائي في Office.");
     });
   }
   function saveDesignTemplate() {
@@ -562,6 +573,7 @@ export default function App() {
           layout: {...layout},
           documentStyle,
           presentationStyle,
+          presentationVisualMode,
         },
       };
       const next = [updated, ...current.filter((p) => p.id !== id)]
@@ -594,7 +606,7 @@ export default function App() {
     setSaveStatus("saving");
     const handle = window.setTimeout(() => persistProject(true), 450);
     return () => window.clearTimeout(handle);
-  }, [activeProjectId, content, stage, settings, brand, layout, documentStyle, presentationStyle]);
+  }, [activeProjectId, content, stage, settings, brand, layout, documentStyle, presentationStyle, presentationVisualMode]);
 
   // Flush the newest draft when a tab is hidden or closed between debounce cycles.
   const flushDraftRef = useRef<() => void>(() => {});
@@ -611,7 +623,7 @@ export default function App() {
         context: {
           source_mode: settings.source_mode, reference_text: settings.reference_text,
           document_type: settings.document_type, branding: {...brand}, layout: {...layout},
-          documentStyle, presentationStyle,
+          documentStyle, presentationStyle, presentationVisualMode,
         },
       }, ...existing.filter((p) => p.id !== activeProjectId)]));
     } catch { /* The visible autosave warning handles unavailable storage. */ }
@@ -1491,6 +1503,22 @@ export default function App() {
                             <p className="muted small">
                               قوالب متنوعة: غلاف احترافي، فهرس للمحاور، بطاقات محتوى قابلة للتحرير وتوزيع آلي للنصوص الطويلة.
                             </p>
+                            <label htmlFor="presentation-visual-mode">
+                              محرك التصميم البصري
+                              <select
+                                id="presentation-visual-mode"
+                                value={presentationVisualMode}
+                                onChange={(e) => setPresentationVisualMode(e.target.value as "editable" | "nano_banana")}
+                              >
+                                <option value="editable">احترافي قابل للتحرير — بدون تكلفة توليد صور</option>
+                                <option value="nano_banana">فاخر بالذكاء الاصطناعي — Nano Banana Pro 🍌</option>
+                              </select>
+                            </label>
+                            <p className="muted small">
+                              {presentationVisualMode === "nano_banana"
+                                ? "عند التنزيل، يُنشئ Nano Banana Pro صورتين فنيتين للغلاف والشرائح المناسبة عبر Gemini API (قد تترتب رسوم لدى Google). تُرسل عناوين العرض والمحاور فقط، ولا تُرسل نصوص الفقرات أو ملاحظات المتحدث. تظل النصوص والأشكال قابلة للتحرير، أما الصور فليست عناصر رسومية مفككة."
+                                : "يحتفظ المحرك بكافة العناوين والمحتويات والأشكال الأصلية داخل PowerPoint، من دون طلبات إنشاء صور مدفوعة."}
+                            </p>
                           </div>
                           <div className="presentation-style-control word-style-control">
                             <h3 className="template-library-heading">مكتبة قوالب Word الجاهزة</h3>
@@ -1993,6 +2021,7 @@ export default function App() {
                           setLayout(p.context?.layout ? { ...defaultLayout, ...p.context.layout } : defaultLayout);
                           setDocumentStyle(p.context?.documentStyle && ["luxury", "corporate", "minimal"].includes(p.context.documentStyle) ? p.context.documentStyle : "luxury");
                           setPresentationStyle(p.context?.presentationStyle && ["luxury", "corporate", "minimal"].includes(p.context.presentationStyle) ? p.context.presentationStyle : "luxury");
+                          setPresentationVisualMode(p.context?.presentationVisualMode === "nano_banana" ? "nano_banana" : "editable");
                           setPrevious(null);
                           setStage(p.stage === "outline" ? "outline" : "edit");
                           setSelected(0);
