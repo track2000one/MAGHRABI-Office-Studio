@@ -30,6 +30,8 @@ app = FastAPI(
     description="Document creation, Office analysis, and full-scale PDF editing engine.",
 )
 
+app.include_router(cloud_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if origin.strip()],
