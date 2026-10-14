@@ -31,7 +31,7 @@ def _content():
 
 def _art():
     buffer = BytesIO()
-    Image.new("RGB", (320, 180), "#40557f").save(buffer, format="JPEG")
+    Image.new("RGB", (640, 360), "#40557f").save(buffer, format="JPEG")
     return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
 
 
