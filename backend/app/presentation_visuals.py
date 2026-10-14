@@ -116,3 +116,64 @@ def generate_visual_assets(content: Content, design_style: str) -> dict[str, byt
         raise HTTPException(502, "تعذر الاتصال بخدمة توليد الصور من Google.") from exc
     finally:
         _slots.release()
+
+
+
+def generate_slide_artwork(content: Content, design_style: str,
+                           slide_index: int, instruction: str = "") -> bytes:
+    """Generate a new image for one *actual* PPTX page, with a single paid call.
+
+    Only the presentation/section heading and opt-in design instruction leave
+    the server; paragraphs and speaker notes are never included.
+    """
+    if design_style not in _COLOR_STYLES:
+        raise HTTPException(422, "طابع التصميم المحدد غير مدعوم.")
+    if not 0 <= slide_index <= 79:
+        raise HTTPException(422, "رقم الشريحة غير صالح.")
+    if len(instruction) > 250:
+        raise HTTPException(422, "اختصر توجيه التصميم إلى 250 حرفًا.")
+    from pptx import Presentation
+    from .exports import export_pptx
+    deck = Presentation(BytesIO(export_pptx(content, design_style)))
+    if slide_index >= len(deck.slides):
+        raise HTTPException(422, "رقم الشريحة لا يتوافق مع العرض الحالي.")
+    slide = deck.slides[slide_index]
+    visible = [shape.text for shape in slide.shapes if shape.has_text_frame]
+    section_title = next(
+        (section.title for section in content.sections
+         if any(section.title in part for part in visible)),
+        "",
+    )
+    heading = section_title if section_title else (
+        content.title if slide_index == 0 else "presentation agenda or executive overview"
+    )
+    palette = _COLOR_STYLES[design_style]
+    prompt = (
+        "Create an alternative original high-end 16:9 visual background for exactly "
+        "one business PowerPoint slide, refined cinematic editorial illustration. "
+        f"Topic / approved heading only: {heading[:160]!r}. "
+        f"Color art direction: {palette}. "
+        "Elegant focal composition, depth, premium materials, subtle architecture. "
+        "Do not draw text, numbers, icons of text, watermarks, logos, charts, "
+        "or signatures. The editor will place editable slide text separately."
+    )
+    if instruction.strip():
+        prompt += f" User-provided visual direction only: {instruction.strip()!r}."
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(503, "يجب إعداد GEMINI_API_KEY لإنشاء صورة الشريحة.")
+    model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image").strip().removeprefix("models/")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", model):
+        raise HTTPException(503, "اسم نموذج الصور غير صالح.")
+    if not _slots.acquire(blocking=False):
+        raise HTTPException(429, "توجد عملية توليد صور جارية. أعد المحاولة بعد انتهائها.")
+    try:
+        with httpx.Client(timeout=httpx.Timeout(50, connect=10)) as client:
+            return _generate(client, model, api_key, prompt)
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, "انتهت مهلة إنشاء صورة الشريحة؛ تحقق من الفوترة قبل تكرار الطلب.") from exc
+    except httpx.RequestError as exc:
+        _logger.warning("One-slide Gemini request failed: %s", type(exc).__name__)
+        raise HTTPException(502, "تعذر الاتصال بمزود صور الذكاء الاصطناعي.") from exc
+    finally:
+        _slots.release()
