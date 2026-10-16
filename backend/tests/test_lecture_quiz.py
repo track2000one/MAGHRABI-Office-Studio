@@ -128,17 +128,17 @@ def test_endpoint_requires_ai_session_and_reuses_upload_text(monkeypatch):
     monkeypatch.setenv("GEMINI_MODEL","placeholder")
     monkeypatch.setattr(quiz,"_provider_quiz",lambda client,payload:json.dumps(mock_bank(payload["count"])))
     with TestClient(app) as client:
-        unauth=client.post("/api/v1/quiz/extract",files={"file":("lecture.docx",docx_data(),
+        unauth=client.post("/api/v1/ai/quiz/extract",files={"file":("lecture.docx",docx_data(),
                       "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
         assert unauth.status_code==401
         login=client.post("/api/v1/ai/login",json={"access_token":"strong-test-office-token"})
         assert login.status_code==200
-        extracted=client.post("/api/v1/quiz/extract",headers={"X-Maghrabi-Client":"studio"},
+        extracted=client.post("/api/v1/ai/quiz/extract",headers={"X-Maghrabi-Client":"studio"},
                       files={"file":("lecture.docx",docx_data(),
                       "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
         assert extracted.status_code==200,extracted.text
         text=extracted.json()["source_text"]
-        generated=client.post("/api/v1/quiz/generate",headers={"X-Maghrabi-Client":"studio"},
+        generated=client.post("/api/v1/ai/quiz/generate",headers={"X-Maghrabi-Client":"studio"},
                          json={"source_text":text,"count":5,"difficulty":"hard","language":"en"})
         assert generated.status_code==200,generated.text
         assert len(generated.json()["questions"])==5
