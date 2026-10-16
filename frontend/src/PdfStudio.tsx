@@ -49,7 +49,7 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export default function PdfStudio() {
+export default function PdfStudio({ initialFile = null }: { initialFile?: File | null }) {
   const input = useRef<HTMLInputElement>(null);
   const mergeInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
@@ -196,6 +196,11 @@ export default function PdfStudio() {
       setBusy("");
     }
   }
+
+  // When opened from «ملفات Office», reuse the analyzed PDF directly.
+  useEffect(() => {
+    if (initialFile) void chooseFile(initialFile);
+  }, [initialFile]);
 
   async function exportEdited() {
     if (!file) return;
