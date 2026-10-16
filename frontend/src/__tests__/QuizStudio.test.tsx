@@ -77,8 +77,8 @@ describe("Lecture Smart Quiz mastery experience",()=>{
         expect(card).not.toBeNull();
         expect(card).toHaveClass("quiz-choice");
         expect(getComputedStyle(card!).flexDirection).toBe("row");
-        expect(getComputedStyle(card!).marginTop).toBe("0px");
-        expect(getComputedStyle(card!).marginBottom).toBe("0px");
+        expect(getComputedStyle(card!).marginTop).toMatch(/^0(?:px)?$/);
+        expect(getComputedStyle(card!).marginBottom).toMatch(/^0(?:px)?$/);
         expect(getComputedStyle(radio).width).toBe("18px");
         expect(getComputedStyle(radio).height).toBe("18px");
         expect(card!.querySelector(".quiz-choice-letter")).toBeTruthy();
