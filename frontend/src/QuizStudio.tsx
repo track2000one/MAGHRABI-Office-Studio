@@ -239,7 +239,7 @@ export default function QuizStudio() {
     {stage === "exam" && active && question && <section className="panel quiz-exam">
       <div className="quiz-topline"><span>{round===0?"الاختبار الأساسي":"جولة إتقان الأخطاء"}</span><strong>السؤال {at+1} من {indices.length}</strong></div>
       <div className="quiz-progress"><div style={{width:((at+1)/indices.length)*100+"%"}}/></div>
-      <div className="quiz-exam-head"><span className="quiz-question-number">س{at+1}</span><h3>{question.question}</h3></div>
+      <div className="quiz-exam-head"><span className="quiz-question-number">س{at+1}</span><h3 dir="auto">{question.question}</h3></div>
       <fieldset className="quiz-choices"><legend className="muted">اختر إجابة واحدة</legend>
         {[0,1,2,3].map(index=>{
           const original=roundPosition(question,index,round);
@@ -247,7 +247,7 @@ export default function QuizStudio() {
             <input type="radio" name={"quiz-answer-"+activeQuestionId} checked={answers[activeQuestionId]===original}
               onChange={()=>setAnswers(a=>({...a,[activeQuestionId]:original}))}/>
             <span className="quiz-choice-letter">{["أ","ب","ج","د"][index]}</span>
-            <span>{question.options[original]}</span>
+            <span className="quiz-choice-text" dir="auto">{question.options[original]}</span>
           </label>;
         })}
       </fieldset>
