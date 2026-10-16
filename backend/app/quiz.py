@@ -9,6 +9,7 @@ from io import BytesIO
 import json
 import logging
 import re
+import unicodedata
 from zipfile import ZipFile, BadZipFile
 
 from docx import Document
@@ -171,7 +172,9 @@ SYSTEM = (
     "'none of the above', repeated or empty options. Spread correct_index across 0-3. "
     "For easy: definitions/facts. For medium: comparisons/application. For hard: reasoning based on lecture evidence. "
     "For mixed: balanced levels. Include an informative explanation of the correct answer and copy one short "
-    "source_quote EXACTLY verbatim from the lecture, without changing punctuation or whitespace. "
+    "source_quote as a short contiguous excerpt copied word-for-word from the supplied [PAGE N] text. "
+    "Never translate, paraphrase, summarize, or invent source_quote. PDF text may have unusual spaces, "
+    "punctuation or ligatures; copy the words as they appear. "
     "Set source_page based on the [PAGE N] label in the uploaded source; DOCX is labeled PAGE 1 but this "
     "does NOT mean a printed Word page. Use the requested output language and no markdown/code fences."
 )
@@ -228,36 +231,111 @@ def _source_pages(text: str) -> dict[int, str]:
     return pages
 
 
+def _canonical_evidence(text: str) -> tuple[str, list[int]]:
+    """Comparison text + source offsets. Ignore PDF layout and typography only.
+
+    Never use semantic/fuzzy matching: equivalent character sequences are
+    allowed, but different facts or paraphrases are NOT considered evidence.
+    """
+    output: list[str] = []
+    offsets: list[int] = []
+    for offset, source_character in enumerate(text):
+        expanded = unicodedata.normalize("NFKD", source_character).casefold()
+        for character in expanded:
+            category = unicodedata.category(character)
+            if category in ("Mn", "Me", "Cf") or character == "\u0640":
+                continue
+            if character.isalnum():
+                output.append(character)
+                offsets.append(offset)
+            elif output and output[-1] != " ":
+                output.append(" ")
+                offsets.append(offset)
+    while output and output[-1] == " ":
+        output.pop()
+        offsets.pop()
+    return "".join(output), offsets
+
+
+def _find_evidence(quote: str, pages: dict[int, str]) -> tuple[int, str] | None:
+    """Return page and actual source passage, not an unverified model quotation."""
+    normalized_quote, _ = _canonical_evidence(quote)
+    if len(normalized_quote) < 10:
+        return None
+    query = re.compile(r"(?<!\w)" + re.escape(normalized_quote) + r"(?!\w)")
+    for number, source in pages.items():
+        normalized_page, positions = _canonical_evidence(source)
+        match = query.search(normalized_page)
+        if match:
+            exact = source[positions[match.start()]:positions[match.end() - 1] + 1]
+            if len(exact) <= 320:
+                return number, exact
+    return None
+
+
+def _validate_quiz(raw: str, count: int, pages: dict[int, str]) -> QuizSet:
+    result = QuizSet.model_validate_json(raw)
+    if len(result.questions) != count:
+        raise HTTPException(502, "عدد الأسئلة الناتج لا يطابق العدد المطلوب.")
+    seen: set[str] = set()
+    for question in result.questions:
+        key = _clean(question.question).casefold()
+        if key in seen:
+            raise HTTPException(502, "احتوى الاختبار على سؤال مكرر.")
+        seen.add(key)
+        evidence = _find_evidence(question.source_quote, pages)
+        if evidence is None:
+            raise HTTPException(502, "لم يُثبت أحد الأسئلة بنص المحاضرة.")
+        question.source_page, question.source_quote = evidence
+    return result
+
+
 def create_quiz(request: QuizRequest) -> QuizSet:
     if not ai.status()["configured"]:
         raise HTTPException(503, "فعّل الذكاء الاصطناعي من إعدادات الاتصال أولاً.")
+    pages = _source_pages(request.source_text)
+    if not pages:
+        raise HTTPException(422, "تحتاج المحاضرة إلى علامات صفحات صحيحة.")
     if not ai._slots.acquire(blocking=False):
         raise HTTPException(429, "الذكاء الاصطناعي مشغول؛ حاول بعد قليل.")
     try:
+        payload = {
+            "task": "Create lecture-grounded practice examination",
+            "count": request.count,
+            "difficulty": request.difficulty,
+            "language": request.language,
+            "lecture_text": request.source_text,
+        }
         with httpx.Client(timeout=httpx.Timeout(100, connect=10)) as client:
-            raw = _provider_quiz(client, {
-                "task": "Create lecture-grounded practice examination",
-                "count": request.count, "difficulty": request.difficulty,
-                "language": request.language, "lecture_text": request.source_text,
-            })
-        result = QuizSet.model_validate_json(raw)
-        if len(result.questions) != request.count:
-            raise HTTPException(502, "لم يلتزم النموذج بعدد الأسئلة المطلوب. حاول مرة أخرى.")
-        pages = _source_pages(request.source_text)
-        if not pages:
-            raise HTTPException(422, "تحتاج المحاضرة إلى علامات صفحات صحيحة.")
-        seen: set[str] = set()
-        for question in result.questions:
-            key = _clean(question.question).casefold()
-            if key in seen:
-                raise HTTPException(502, "تكرر أحد الأسئلة. أعد التوليد للحصول على اختبار متنوع.")
-            seen.add(key)
-            quoted = _clean(question.source_quote)
-            matches = [page for page, body in pages.items() if quoted in body]
-            if not matches:
-                raise HTTPException(502, "لم يُثبت أحد الأسئلة بنص المحاضرة. أعد التوليد أو قلل عدد الأسئلة.")
-            question.source_page = matches[0]
-        return result
+            # A provider may accidentally paraphrase a citation. Retry once
+            # automatically with precise grounding feedback; never publish an
+            # unsupported answer or disclose source material in log messages.
+            for attempt in range(2):
+                raw = _provider_quiz(client, payload)
+                try:
+                    return _validate_quiz(raw, request.count, pages)
+                except (ValidationError, ValueError, HTTPException) as exc:
+                    if isinstance(exc, HTTPException) and exc.status_code != 502:
+                        raise
+                    if attempt == 1:
+                        raise HTTPException(
+                            502,
+                            "تعذر إنشاء أسئلة موثقة بالكامل من نص المحاضرة بعد إعادة المحاولة تلقائيًا. "
+                            "جرّب 5 أسئلة، أو ارفع نسخة PDF نصية أو قسّم المحاضرة إلى أجزاء.",
+                        ) from exc
+                    logger.info("AI lecture quiz evidence check failed; retrying generation once")
+                    payload = {
+                        **payload,
+                        "validation_feedback": (
+                            "The previous generated quiz FAILED source verification. "
+                            "Generate a NEW complete set of exactly the requested count. "
+                            "For EVERY question, source_quote MUST contain a contiguous "
+                            "verbatim excerpt copied from lecture_text [PAGE N]. "
+                            "Do not translate or paraphrase the source_quote. "
+                            "Copy a short, distinctive phrase of at least 10 characters "
+                            "from the lecture itself. Do not use external knowledge."
+                        ),
+                    }
     except HTTPException:
         raise
     except httpx.TimeoutException as exc:
