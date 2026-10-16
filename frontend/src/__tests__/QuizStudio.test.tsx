@@ -70,6 +70,14 @@ describe("Lecture Smart Quiz mastery experience",()=>{
     document.head.appendChild(style);
     try {
       await generate();
+      const radioRule=Array.from(style.sheet?.cssRules ?? []).find(rule =>
+        (rule as CSSStyleRule).selectorText === '.quiz-choices .quiz-choice input[type="radio"]'
+      ) as CSSStyleRule | undefined;
+      // JSDOM returns "auto" for native radio-control computed dimensions;
+      // verify the real stylesheet declaration while computing row layout.
+      expect(radioRule?.style.getPropertyValue("width")).toBe("18px");
+      expect(radioRule?.style.getPropertyValue("height")).toBe("18px");
+      expect(radioRule?.style.getPropertyValue("padding")).toBe("0");
       const radios=screen.getAllByRole("radio");
       expect(radios).toHaveLength(4);
       for(const radio of radios){
@@ -79,8 +87,6 @@ describe("Lecture Smart Quiz mastery experience",()=>{
         expect(getComputedStyle(card!).flexDirection).toBe("row");
         expect(getComputedStyle(card!).marginTop).toMatch(/^0(?:px)?$/);
         expect(getComputedStyle(card!).marginBottom).toMatch(/^0(?:px)?$/);
-        expect(getComputedStyle(radio).width).toBe("18px");
-        expect(getComputedStyle(radio).height).toBe("18px");
         expect(card!.querySelector(".quiz-choice-letter")).toBeTruthy();
         expect(card!.querySelector(".quiz-choice-text")).toHaveAttribute("dir","auto");
       }
