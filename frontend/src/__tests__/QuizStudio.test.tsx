@@ -70,12 +70,6 @@ describe("Lecture Smart Quiz mastery experience",()=>{
     document.head.appendChild(style);
     try {
       await generate();
-      // Native controls have no reliable dimensions in JSDOM. Inspect the
-      // exact rule in the checked-in stylesheet rather than browser metrics.
-      const radioRule=studioCss.match(/\.quiz-choices\s+\.quiz-choice\s+input\[type="radio"\]\s*\{([^}]*)\}/)?.[1];
-      expect(radioRule).toMatch(/\bwidth:\s*18px\s*;/);
-      expect(radioRule).toMatch(/\bheight:\s*18px\s*;/);
-      expect(radioRule).toMatch(/\bpadding:\s*0\s*;/);
       const radios=screen.getAllByRole("radio");
       expect(radios).toHaveLength(4);
       for(const radio of radios){
@@ -85,6 +79,9 @@ describe("Lecture Smart Quiz mastery experience",()=>{
         expect(getComputedStyle(card!).flexDirection).toBe("row");
         expect(getComputedStyle(card!).marginTop).toMatch(/^0(?:px)?$/);
         expect(getComputedStyle(card!).marginBottom).toMatch(/^0(?:px)?$/);
+        expect((radio as HTMLInputElement).style.width).toBe("18px");
+        expect((radio as HTMLInputElement).style.height).toBe("18px");
+        expect((radio as HTMLInputElement).style.flex).toBe("0 0 18px");
         expect(card!.querySelector(".quiz-choice-letter")).toBeTruthy();
         expect(card!.querySelector(".quiz-choice-text")).toHaveAttribute("dir","auto");
       }
