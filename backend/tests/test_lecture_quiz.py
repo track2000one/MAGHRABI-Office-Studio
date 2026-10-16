@@ -228,3 +228,68 @@ def test_page_reference_is_canonicalized_using_actual_pdf_page_number(monkeypatc
     res = quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 6]\n" + SOURCE, count=5))
     assert res.questions[0].source_page == 6
     assert res.questions[0].source_quote == "The heart sends blood through arteries to tissues"
+
+
+def test_generate_40_question_exam_as_four_verified_ten_question_batches(monkeypatch):
+    """Each independent request stays small, carries prior questions, and spans 40."""
+    monkeypatch.setattr(quiz.ai,"status",lambda:{"configured":True})
+    seen_request_lengths = []
+    asked = []
+    def provider(client,payload):
+        batch_size = payload["count"]
+        previous = payload.get("previous_questions",[])
+        seen_request_lengths.append((batch_size,len(previous)))
+        start = len(previous)
+        questions=[]
+        for offset in range(batch_size):
+            idx = start + offset + 1
+            questions.append({
+                "question":f"Which circulation fact describes item number {idx} from the lecture?",
+                "options":["A different item","The item in the lecture","Another choice","Unrelated answer"],
+                "correct_index":1,
+                "explanation":"The cardiovascular lecture explicitly describes the relevant system.",
+                "source_quote":QUOTES[(idx - 1) % len(QUOTES)],
+                "source_page":1,
+            })
+        asked.extend([question["question"] for question in questions])
+        return json.dumps({"title":"Circulatory system practice test","questions":questions})
+
+    monkeypatch.setattr(quiz,"_provider_quiz",provider)
+    built=[]
+    for size in (10,10,10,10):
+        req=quiz.QuizRequest(source_text="[PAGE 1]\n"+SOURCE,count=size,avoid_questions=[q.question for q in built])
+        batch=quiz.create_quiz(req)
+        built.extend(batch.questions)
+    assert len(built)==40
+    assert len({q.question for q in built})==40
+    assert seen_request_lengths==[(10,0),(10,10),(10,20),(10,30)]
+    assert all(q.source_quote in SOURCE for q in built)
+
+
+def test_large_exam_batch_rejects_repeated_question_from_previous_batch(monkeypatch):
+    monkeypatch.setattr(quiz.ai,"status",lambda:{"configured":True})
+    generated = mock_bank(5)
+    generated["questions"][0]["question"] = "  " + generated["questions"][0]["question"].upper() + "!!"
+    seen=[]
+    def provider(client,payload):
+        seen.append(payload)
+        return json.dumps(generated)
+    monkeypatch.setattr(quiz,"_provider_quiz",provider)
+    with pytest.raises(Exception) as error:
+        quiz.create_quiz(quiz.QuizRequest(
+            source_text="[PAGE 1]\n"+SOURCE,count=5,
+            avoid_questions=[mock_bank(5)["questions"][0]["question"]],
+        ))
+    assert error.value.status_code==502
+    assert len(seen)==2  # Existing one-retry strategy also applies to duplicates.
+    assert "previous_questions" in seen[1]
+    assert "validation_feedback" in seen[1]
+
+
+def test_large_exam_batch_rejects_above_40_questions():
+    with pytest.raises(ValueError):
+        quiz.QuizRequest(source_text="[PAGE 1]\n"+SOURCE,count=10,
+                         avoid_questions=[f"Previous question number {n}?" for n in range(31)])
+    with pytest.raises(ValueError):
+        quiz.QuizRequest(source_text="[PAGE 1]\n"+SOURCE,count=10,
+                         avoid_questions=["a"] * 41)
