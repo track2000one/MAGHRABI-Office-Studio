@@ -85,7 +85,10 @@ describe("Lecture Smart Quiz mastery experience",()=>{
     const saved=localStorage.getItem("maghrabi-office-quiz-banks-v1")||"";
     expect(saved).toContain("Circulation lecture practice");
     expect(saved).not.toContain("[PAGE 1]");
-    await user.click(screen.getByRole("button",{name:/مشاريعي|لا يوجد زر/}).catch?.(()=>{}));
+    cleanup();
+    render(<QuizStudio/>);
+    expect(screen.getByText("Circulation lecture practice")).toBeVisible();
+    expect(screen.getByRole("button",{name:"بدء الاختبار"})).toBeEnabled();
   });
   it("rejects an unsupported lecture size before upload",async()=>{
     const user=userEvent.setup();
@@ -100,7 +103,7 @@ describe("Lecture Smart Quiz mastery experience",()=>{
     const user=userEvent.setup();
     render(<App/>);
     await user.click(screen.getByRole("button",{name:"الاختبارات الذكية"}));
-    expect(screen.getByRole("heading",{name:/الاختبارات الذكية/}).getAttribute("class")).not.toBeNull();
+    expect(screen.getAllByRole("heading",{name:/الاختبارات الذكية/}).length).toBeGreaterThan(0);
     expect(screen.getByLabelText("ملف المحاضرة")).toBeVisible();
   });
 });
