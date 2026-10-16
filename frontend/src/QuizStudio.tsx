@@ -244,7 +244,7 @@ export default function QuizStudio() {
         {[0,1,2,3].map(index=>{
           const original=roundPosition(question,index,round);
           return <label key={index} className={"quiz-choice"+(answers[activeQuestionId]===original?" active":"")}>
-            <input type="radio" name={"quiz-answer-"+activeQuestionId} checked={answers[activeQuestionId]===original}
+            <input type="radio" style={{width:18,height:18,margin:0,padding:0,flex:"0 0 18px"}} name={"quiz-answer-"+activeQuestionId} checked={answers[activeQuestionId]===original}
               onChange={()=>setAnswers(a=>({...a,[activeQuestionId]:original}))}/>
             <span className="quiz-choice-letter">{["أ","ب","ج","د"][index]}</span>
             <span className="quiz-choice-text" dir="auto">{question.options[original]}</span>
