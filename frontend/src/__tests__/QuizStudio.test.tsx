@@ -94,7 +94,7 @@ describe("Lecture Smart Quiz mastery experience",()=>{
     const user=userEvent.setup();
     render(<QuizStudio/>);
     const file=new File([new Uint8Array(8*1024*1024+1)],"oversize.pdf",{type:"application/pdf"});
-    await user.upload(screen.getByLabelText("ملف المحاضرة"),file,{applyAccept:false});
+    await user.upload(screen.getByLabelText("ملف المحاضرة"),file);
     await user.click(screen.getByRole("button",{name:"استخراج المحاضرة"}));
     expect(screen.getByRole("alert")).toHaveTextContent("8 ميجابايت");
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
