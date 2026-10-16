@@ -121,6 +121,11 @@ const metrics: Record<string, string> = {
   slides: "شرائح",
   text_shapes: "عناصر نصية",
   pictures: "صور",
+  pages: "الصفحات",
+  pages_with_text: "صفحات تحتوي على نص",
+  text_chars: "الحروف النصية",
+  landscape_pages: "صفحات أفقية",
+  pages_without_text: "صفحات دون نص قابل للاستخراج",
 };
 function readProjects(): Project[] {
   try {
@@ -206,6 +211,7 @@ export default function App() {
   const [projectFormat, setProjectFormat] = useState<"all" | Format>("all");
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [file, setFile] = useState<File | null>(null);
+  const [pdfHandoff, setPdfHandoff] = useState<File | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const projectBackupInput = useRef<HTMLInputElement>(null);
@@ -673,8 +679,8 @@ export default function App() {
   async function upload(next: File | undefined) {
     if (!next) return;
     await run("جارٍ تحليل الملف…", async () => {
-      if (!/\.(docx|xlsx|pptx)$/i.test(next.name))
-        throw new Error("اختر ملف DOCX أو XLSX أو PPTX.");
+      if (!/\.(docx|xlsx|pptx|pdf)$/i.test(next.name))
+        throw new Error("اختر ملف PDF أو DOCX أو XLSX أو PPTX.");
       if (next.size > 10 * 1024 * 1024)
         throw new Error("الحد الأقصى للملف هو 10 ميجابايت.");
       if (!next.size) throw new Error("الملف فارغ.");
@@ -745,7 +751,7 @@ export default function App() {
               disabled={!!busy}
               key={key}
               className={page === key ? "side-link selected" : "side-link"}
-              onClick={() => changePage(key)}
+              onClick={() => { if (key === "pdf") setPdfHandoff(null); changePage(key); }}
             >
               <span aria-hidden="true">{icon}</span>
               {title}
@@ -1819,7 +1825,7 @@ export default function App() {
             <div className="panel">
               <h2>ملفك هو نقطة البداية</h2>
               <p className="muted">
-                تحليل فعلي لمحتويات ملفات Office. الحد الأقصى: 10 ميجابايت.
+                تحليل فعلي لمحتويات ملفات PDF وOffice. الحد الأقصى: 10 ميجابايت.
               </p>
               <button
                 className="upload-zone"
@@ -1833,12 +1839,12 @@ export default function App() {
               >
                 <span>↥</span>
                 <strong>اسحب ملفًا هنا أو اختره من جهازك</strong>
-                <small>DOCX · XLSX · PPTX</small>
+                <small>PDF · DOCX · XLSX · PPTX</small>
               </button>
               <input
                 ref={input}
                 type="file"
-                accept=".docx,.xlsx,.pptx"
+                accept=".pdf,.docx,.xlsx,.pptx,application/pdf"
                 hidden
                 onChange={(e) => {
                   void upload(e.target.files?.[0]);
@@ -1849,6 +1855,25 @@ export default function App() {
                 <div className="selected-file">
                   <strong>{file.name}</strong>
                   <span>{(file.size / 1024).toFixed(1)} KB</span>
+                </div>
+              )}
+              {file?.name.toLowerCase().endsWith(".pdf") && (
+                <div className="pdf-analyzed-actions">
+                  <button
+                    type="button"
+                    className="button primary full"
+                    disabled={!!busy}
+                    onClick={() => {
+                      setPdfHandoff(file);
+                      changePage("pdf");
+                    }}
+                  >
+                    فتح ملف PDF في المحرّر
+                  </button>
+                  <p className="muted small">
+                    يمكنك الآن ترتيب صفحات PDF وقصّها وإضافة الصور أو تحرير عناصره
+                    عبر أدوات PDF المتخصصة.
+                  </p>
                 </div>
               )}
               {file?.name.toLowerCase().endsWith(".docx") && (
@@ -1919,7 +1944,7 @@ export default function App() {
             )}
           </div>
         )}
-        {page === "pdf" && <PdfStudio />}
+        {page === "pdf" && <PdfStudio initialFile={pdfHandoff} />}
         {page === "quiz" && <QuizStudio />}
         {page === "projects" && (
           <>

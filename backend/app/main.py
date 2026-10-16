@@ -19,7 +19,7 @@ from .content import Content, GenerateRequest, ReviseRequest
 from . import ai, ai_session, quiz
 from .exports import export_docx, export_pptx, format_docx
 from .word_preview import render_word_preview
-from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
+from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, open_pdf, pt_to_mm, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
 from pptx import Presentation
 
@@ -41,6 +41,7 @@ SUPPORTED = {
     ".docx": "word",
     ".xlsx": "excel",
     ".pptx": "powerpoint",
+    ".pdf": "pdf",
 }
 
 
@@ -110,25 +111,77 @@ def analyze_pptx(data: bytes) -> dict:
     }
 
 
+def analyze_uploaded_pdf(data: bytes) -> tuple[dict, str]:
+    """PDF metrics for the unified file-analysis page, with bounded processing."""
+    doc = open_pdf(data)
+    try:
+        if doc.page_count > 300:
+            raise HTTPException(413, "يُسمح بتحليل ملفات PDF حتى 300 صفحة في صفحة تحليل الملفات.")
+        text_chars = 0
+        pages_with_text = 0
+        landscape_pages = 0
+        formats: dict[str, int] = {}
+        for page in doc:
+            text = page.get_text("text")
+            count = len(text.strip())
+            text_chars += count
+            pages_with_text += int(count > 0)
+            rect = page.rect
+            landscape_pages += int(rect.width > rect.height)
+            size = f"{round(pt_to_mm(rect.width), 1)} × {round(pt_to_mm(rect.height), 1)} مم"
+            formats[size] = formats.get(size, 0) + 1
+        metrics = {
+            "pages": doc.page_count,
+            "pages_with_text": pages_with_text,
+            "text_chars": text_chars,
+            "landscape_pages": landscape_pages,
+            "pages_without_text": doc.page_count - pages_with_text,
+        }
+        most_common = sorted(formats.items(), key=lambda pair: (-pair[1], pair[0]))[:4]
+        description = "، ".join(f"{size} ({count} صفحة)" for size, count in most_common)
+        note = "إحصاءات فعلية لصفحات PDF، ولا تتضمن تقييمًا لجودة المحتوى."
+        if not pages_with_text:
+            note += " لا يوجد نص قابل للاستخراج؛ قد يكون المستند ممسوحًا ضوئيًا."
+        elif pages_with_text < doc.page_count:
+            note += " بعض الصفحات لا تحتوي على نص قابل للاستخراج."
+        if description:
+            note += " المقاسات الأكثر استخدامًا: " + description + "."
+        return metrics, note
+    finally:
+        doc.close()
+
+
 @app.post("/api/v1/files/analyze")
 async def analyze_file(file: UploadFile = File(...)) -> dict:
     filename = file.filename or "document"
     extension = Path(filename).suffix.lower()
     document_type = SUPPORTED.get(extension)
     if not document_type:
-        raise HTTPException(status_code=415, detail="Unsupported file type. Use DOCX, XLSX or PPTX.")
+        raise HTTPException(status_code=415, detail="اختر ملف PDF أو DOCX أو XLSX أو PPTX.")
 
-    data = await read_office(file)
-
-    try:
-        if extension == ".docx":
-            metrics = analyze_docx(data)
-        elif extension == ".xlsx":
-            metrics = analyze_xlsx(data)
-        else:
-            metrics = analyze_pptx(data)
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail="تعذر قراءة الملف. تأكد من أنه ملف Office صالح وغير محمي بكلمة مرور.") from exc
+    # PDFs are not ZIP archives. Use the same 10MB limit and avoid treating
+    # them as Office OpenXML documents during upload validation.
+    if extension == ".pdf":
+        data = await file.read(MAX_UPLOAD + 1)
+        await file.close()
+        if not data:
+            raise HTTPException(400, "الملف فارغ.")
+        if len(data) > MAX_UPLOAD:
+            raise HTTPException(413, "الحد الأقصى للملف هو 10 ميجابايت.")
+        metrics, note = await run_in_threadpool(analyze_uploaded_pdf, data)
+    else:
+        data = await read_office(file)
+        await file.close()
+        try:
+            if extension == ".docx":
+                metrics = analyze_docx(data)
+            elif extension == ".xlsx":
+                metrics = analyze_xlsx(data)
+            else:
+                metrics = analyze_pptx(data)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail="تعذر قراءة الملف. تأكد من أنه ملف Office صالح وغير محمي بكلمة مرور.") from exc
+        note = "النتائج إحصاءات فعلية للمحتوى؛ لا تمثل تقييمًا شاملًا لجودة التنسيق."
 
     return {
         "filename": filename,
@@ -138,7 +191,7 @@ async def analyze_file(file: UploadFile = File(...)) -> dict:
         "health_score": None,
         "metrics": metrics,
         "issues": [],
-        "analysis_note": "النتائج إحصاءات فعلية للمحتوى؛ لا تمثل تقييمًا شاملًا لجودة التنسيق.",
+        "analysis_note": note,
     }
 
 
