@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, downloadResponse, example, jsonBody } from "./api";
 import type { Content, DocumentType, Format, RequestSettings, Section } from "./api";
 import PdfStudio from "./PdfStudio";
+import QuizStudio from "./QuizStudio";
 
-type Page = "home" | "create" | "files" | "pdf" | "projects" | "settings";
+type Page = "home" | "create" | "files" | "pdf" | "quiz" | "projects" | "settings";
 type Analysis = {
   filename: string;
   type: string;
@@ -108,6 +109,7 @@ const names: Record<Page, string> = {
   create: "إنشاء المحتوى",
   files: "تحليل وتنسيق الملفات",
   pdf: "تحرير PDF",
+  quiz: "الاختبارات الذكية",
   projects: "مشاريعي",
   settings: "إعدادات الاتصال",
 };
@@ -734,6 +736,7 @@ export default function App() {
               ["create", "✦", "إنشاء بالذكاء الاصطناعي"],
               ["files", "▤", "ملفات Office"],
               ["pdf", "PDF", "تحرير PDF"],
+              ["quiz", "✎", "الاختبارات الذكية"],
               ["projects", "◫", "مشاريعي"],
               ["settings", "⚙", "إعدادات الاتصال"],
             ] as [Page, string, string][]
@@ -1917,6 +1920,7 @@ export default function App() {
           </div>
         )}
         {page === "pdf" && <PdfStudio />}
+        {page === "quiz" && <QuizStudio />}
         {page === "projects" && (
           <>
             <div className="soft-note">

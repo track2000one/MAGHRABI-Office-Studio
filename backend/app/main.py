@@ -16,7 +16,7 @@ from fastapi.responses import Response, FileResponse
 from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
-from . import ai, ai_session
+from . import ai, ai_session, quiz
 from .exports import export_docx, export_pptx, format_docx
 from .word_preview import render_word_preview
 from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
@@ -254,6 +254,31 @@ def generate_content(request: GenerateRequest, http_request: Request, authorizat
 def revise_content(request: ReviseRequest, http_request: Request, authorization: str | None = Header(default=None)):
     _require_ai_access(http_request, authorization)
     return ai.revise(request)
+
+
+@app.post("/api/v1/ai/quiz/extract", response_model=quiz.LectureExtract)
+async def quiz_extract(
+    request: Request,
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+):
+    _require_ai_access(request, authorization)
+    name = (file.filename or "lecture")[:180]
+    data = await file.read(quiz.MAX_LECTURE_BYTES + 1)
+    try:
+        return await run_in_threadpool(quiz.extract_lecture, data, name)
+    finally:
+        await file.close()
+
+
+@app.post("/api/v1/ai/quiz/generate", response_model=quiz.QuizSet)
+def quiz_generate(
+    payload: quiz.QuizRequest,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    _require_ai_access(request, authorization)
+    return quiz.create_quiz(payload)
 
 
 @app.post('/api/v1/exports/docx')
