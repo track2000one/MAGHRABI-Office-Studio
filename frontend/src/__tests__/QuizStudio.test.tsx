@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom/vitest";
 import QuizStudio from "../QuizStudio";
 import App from "../App";
+import studioCss from "../index.css?raw";
 
 const lecture="The circulation lecture describes arteries, veins and capillaries. ".repeat(8);
 const questions=Array.from({length:5},(_,i)=>({
@@ -60,6 +61,33 @@ describe("Lecture Smart Quiz mastery experience",()=>{
     expect(JSON.parse(request[1]!.body as string)).toMatchObject({count:5,difficulty:"hard",language:"ar"});
     expect(new Headers(request[1]!.headers).get("X-Maghrabi-Client")).toBe("studio");
     expect(user).toBeDefined();
+  });
+  it("lays out each quiz option horizontally without global label margins or wide radios",async()=>{
+    // Real stylesheet regression: global label/input rules previously stacked
+    // the radio, choice letter and option text vertically with huge gaps.
+    const style=document.createElement("style");
+    style.textContent=studioCss;
+    document.head.appendChild(style);
+    try {
+      await generate();
+      const radios=screen.getAllByRole("radio");
+      expect(radios).toHaveLength(4);
+      for(const radio of radios){
+        const card=radio.closest("label");
+        expect(card).not.toBeNull();
+        expect(card).toHaveClass("quiz-choice");
+        expect(getComputedStyle(card!).flexDirection).toBe("row");
+        expect(getComputedStyle(card!).marginTop).toBe("0px");
+        expect(getComputedStyle(card!).marginBottom).toBe("0px");
+        expect(getComputedStyle(radio).width).toBe("18px");
+        expect(getComputedStyle(radio).height).toBe("18px");
+        expect(card!.querySelector(".quiz-choice-letter")).toBeTruthy();
+        expect(card!.querySelector(".quiz-choice-text")).toHaveAttribute("dir","auto");
+      }
+      expect(screen.getByText("What fact number 1 is explained by the lecture?")).toHaveAttribute("dir","auto");
+    } finally {
+      style.remove();
+    }
   });
   it("grades first attempt, repeats only wrong answers, and requires two correct reviews",async()=>{
     const user=await generate();
