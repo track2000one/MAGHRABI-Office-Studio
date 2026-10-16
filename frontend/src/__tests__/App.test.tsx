@@ -446,6 +446,39 @@ describe("Office Studio workflows", () => {
     expect(JSON.parse(localStorage.getItem("maghrabi-office-word-designs-v1") || "[]")).toHaveLength(0);
   });
 
+  it("accepts a PDF in Office files and opens the same PDF in PDF editor", async () => {
+    const user = userEvent.setup();
+    URL.createObjectURL = vi.fn(() => "blob:analysis-pdf");
+    URL.revokeObjectURL = vi.fn();
+    const {container} = render(<App />);
+    await user.click(screen.getByRole("button",{name: "ملفات Office"}));
+    expect(screen.getByText("PDF · DOCX · XLSX · PPTX")).toBeVisible();
+
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      filename:"lecture.pdf",type:"pdf",size_bytes:3000,status:"analyzed",
+      metrics:{pages:4,text_chars:2200,pages_with_text:3,landscape_pages:1,pages_without_text:1},
+      analysis_note:"بعض الصفحات لا تحتوي على نص قابل للاستخراج.",
+    }),{status:200,headers:{"Content-Type":"application/json"}}));
+    const upload=new File(["pdf-fake-content"],"lecture.pdf",{type:"application/pdf"});
+    await user.upload(container.querySelector('input[type="file"]')!,upload);
+    expect(await screen.findByText("بعض الصفحات لا تحتوي على نص قابل للاستخراج.")).toBeVisible();
+    expect(screen.getByText("4")).toBeVisible();
+    expect(screen.getByText("الصفحات")).toBeVisible();
+    expect(screen.getByText("صفحات دون نص قابل للاستخراج")).toBeVisible();
+    const apiCall=vi.mocked(fetch).mock.calls.find(([url])=>String(url).endsWith("/files/analyze"))!;
+    expect((apiCall[1]!.body as FormData).get("file")).toBe(upload);
+
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      filename:"lecture.pdf",size_bytes:3000,pages:4,text_chars:2200,metadata:{},
+      page_sizes:[{page:1,width_mm:210,height_mm:297,orientation:"portrait",rotation:0,text_chars:550}],
+      supported_sizes:["A4","CUSTOM"],
+    }),{status:200,headers:{"Content-Type":"application/json"}}));
+    await user.click(screen.getByRole("button",{name:"فتح ملف PDF في المحرّر"}));
+    await waitFor(()=>expect(vi.mocked(fetch).mock.calls.some(([url])=>String(url).endsWith("/pdf/analyze"))).toBe(true));
+    const editorCall=vi.mocked(fetch).mock.calls.find(([url])=>String(url).endsWith("/pdf/analyze"))!;
+    expect((editorCall[1]!.body as FormData).get("file")).toBe(upload);
+  });
+
   it("uploads the actual file to analysis and renders returned metrics", async () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
