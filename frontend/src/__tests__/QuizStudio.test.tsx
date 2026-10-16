@@ -109,6 +109,51 @@ describe("Lecture Smart Quiz mastery experience",()=>{
     expect(saved[0].firstScore).toBe(80);
     expect(saved[0].reviewIds).toHaveLength(0);
   });
+
+  it("offers 40 questions and splits the full exam into four generated groups", async()=>{
+    const sizes:number[]=[];
+    vi.mocked(fetch).mockImplementation(async (input,init)=>{
+      const url=String(input);
+      if(url.includes("/ai/quiz/extract")) return new Response(JSON.stringify({
+        filename:"lecture.pdf",source_text:"[PAGE 1] "+lecture,
+        pages:1,truncated:false,characters:lecture.length
+      }),{status:200});
+      if(url.includes("/ai/quiz/generate")){
+        const p=JSON.parse(init!.body as string);
+        const offset=p.avoid_questions.length;
+        sizes.push(offset);
+        return new Response(JSON.stringify({
+          title:"Extended revision test",
+          questions:Array.from({length:p.count},(_,i)=>({
+            question:"Explain the lecture topic number "+(offset+i+1)+" in context?",
+            options:["one","two","three","four"],correct_index:0,
+            explanation:"This fact is supported by the supplied lecture information.",
+            source_quote:"The circulation lecture describes arteries, veins and capillaries.",
+            source_page:1,
+          }))
+        }),{status:200});
+      }
+      return new Response("{}",{status:200});
+    });
+    const user=userEvent.setup();
+    render(<QuizStudio/>);
+    await user.upload(screen.getByLabelText("ملف المحاضرة"),
+      new File([lecture],"lecture.pdf",{type:"application/pdf"}));
+    await user.click(screen.getByRole("button",{name:"استخراج المحاضرة"}));
+    await screen.findByText(/تم استخراج النص/);
+    const control=screen.getByLabelText("عدد أسئلة الاختبار");
+    expect(Array.from((control as HTMLSelectElement).options).map(o=>Number(o.value)))
+      .toEqual([5,10,15,20,25,30,35,40]);
+    await user.selectOptions(control,"40");
+    await user.click(screen.getByRole("button",{name:"إنشاء الاختبار وبدء الأسئلة"}));
+    expect(await screen.findByText("السؤال 1 من 40")).toBeVisible();
+    expect(sizes).toEqual([0,10,20,30]);
+    const saved=JSON.parse(localStorage.getItem("maghrabi-office-quiz-banks-v1")||"[]");
+    expect(saved[0].bank.questions).toHaveLength(40);
+    cleanup();
+    render(<QuizStudio/>);
+    expect(screen.getByText(/40 سؤال/)).toBeVisible();
+  });
   it("returns to saved question banks without storing the lecture source",async()=>{
     const user=await generate();
     const saved=localStorage.getItem("maghrabi-office-quiz-banks-v1")||"";
