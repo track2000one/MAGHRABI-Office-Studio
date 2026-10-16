@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useState} from "react";
+import {useEffect, useMemo, useRef, useState} from "react";
 import {api, jsonBody} from "./api";
 
 type Question = {
@@ -27,6 +27,8 @@ type Extracted = {filename: string; source_text: string; pages: number; truncate
 type Stage = "setup" | "exam" | "results";
 const KEY = "maghrabi-office-quiz-banks-v1";
 const MAX_BANKS = 12;
+const MAX_EXAM_QUESTIONS = 40;
+const BATCH_SIZE = 10;
 const levels: Record<string,string> = {easy:"سهل",medium:"متوسط",hard:"صعب",mixed:"متنوع"};
 function readSaved(): SavedQuiz[] {
   try {
@@ -37,7 +39,7 @@ function readSaved(): SavedQuiz[] {
       const v = item as Partial<SavedQuiz>;
       return typeof v.id === "string" && typeof v.title === "string" &&
         Array.isArray(v.bank?.questions) && v.bank.questions.length >= 5 &&
-        v.bank.questions.length <= 20 && Array.isArray(v.reviewIds) &&
+        v.bank.questions.length <= MAX_EXAM_QUESTIONS && Array.isArray(v.reviewIds) &&
         typeof v.streaks === "object" && v.streaks !== null;
     }).slice(0,MAX_BANKS);
   } catch { return []; }
@@ -65,6 +67,9 @@ export default function QuizStudio() {
   const [error,setError] = useState("");
   const [note,setNote] = useState("");
   const [deleteId,setDeleteId] = useState("");
+  // Preserve completed batches in the current tab if a later provider request fails.
+  // Source text is never persisted as part of the saved question bank.
+  const partialRef = useRef<{key:string;title:string;questions:Question[]} | null>(null);
   const activeQuestionId = indices[at];
   const question = active && activeQuestionId !== undefined ? active.bank.questions[activeQuestionId] : null;
   const totalQuestions = active?.bank.questions.length || 0;
@@ -104,6 +109,7 @@ export default function QuizStudio() {
       form.append("file",upload);
       const info: Extracted = await (await api("/ai/quiz/extract",{method:"POST",body:form})).json();
       setLecture(info);
+      partialRef.current = null;
       setNote(info.truncated
         ? "المحاضرة طويلة؛ سيُبنى الاختبار من الجزء المستخرج فقط. لتغطية بقية الصفحات، قسّم المحاضرة إلى ملفات."
         : "تم استخراج النص. يمكنك الآن إنشاء اختبار من محتوى المحاضرة.");
@@ -112,20 +118,63 @@ export default function QuizStudio() {
   }
   async function generate() {
     if (!lecture) {setError("استخرج نص المحاضرة أولًا.");return;}
-    setBusy("جارٍ إنشاء أسئلة مستندة إلى المحاضرة…");setError("");setNote("");
+    setBusy("جارٍ إعداد الاختبار…");setError("");setNote("");
+    const key = JSON.stringify([lecture.source_text,count,difficulty,language]);
+    const previous = partialRef.current?.key === key ? partialRef.current : null;
+    const collected: Question[] = previous ? [...previous.questions] : [];
+    let title = previous?.title || "";
     try {
-      const bank: Bank = await (await api("/ai/quiz/generate",jsonBody({
-        source_text:lecture.source_text,count,difficulty,language,
-      }))).json();
+      // Small exams use one request. Exams > 20 use up to 4 individual
+      // requests, each independently covered by the existing 120s timeout.
+      // This avoids huge, often truncated model responses for 30–40 MCQs.
+      const sizes = count <= 20 ? [count] :
+        Array.from({length: Math.ceil(count/BATCH_SIZE)}, (_, i) =>
+          Math.min(BATCH_SIZE,count-i*BATCH_SIZE));
+      const fingerprint = (text: string) => text.normalize("NFKD")
+        .toLocaleLowerCase().replace(/[\u0300-\u036f\u064b-\u065f]/g,"")
+        .replace(/[^\p{L}\p{N}]+/gu," ").trim();
+      const known = new Set(collected.map(q=>fingerprint(q.question)));
+      for (const size of sizes) {
+        if (collected.length >= count) break;
+        // Allow resuming only already completed batches of this configuration.
+        // The final partial batch is never saved until all its questions pass.
+        if (collected.length % BATCH_SIZE !== 0 && collected.length < count)
+          throw new Error("تعذر استئناف دفعات الاختبار. أعد إنشاء الاختبار من البداية.");
+        setBusy("جارٍ توليد الأسئلة وتوثيقها… ("+collected.length+" من "+count+")");
+        const batch: Bank = await (await api("/ai/quiz/generate",jsonBody({
+          source_text:lecture.source_text,count:size,difficulty,language,
+          avoid_questions:collected.map(q=>q.question),
+        }))).json();
+        if (!Array.isArray(batch.questions) || batch.questions.length !== size)
+          throw new Error("لم يُنتج مزود الذكاء الاصطناعي العدد المطلوب في هذه الدفعة.");
+        for (const q of batch.questions) {
+          const fingerprinted = fingerprint(q.question);
+          if (!fingerprinted || known.has(fingerprinted))
+            throw new Error("تكرر أحد الأسئلة بين دفعات الاختبار. أعد المحاولة.");
+          known.add(fingerprinted);
+        }
+        if (!title) title=batch.title;
+        collected.push(...batch.questions);
+        partialRef.current={key,title,questions:[...collected]};
+      }
+      if (collected.length !== count)
+        throw new Error("لم تكتمل جميع أسئلة الاختبار. حاول مجددًا.");
+      const bank: Bank = {title,questions:collected};
       const item:SavedQuiz = {
         id:crypto.randomUUID(), title:bank.title,filename:lecture.filename,
         createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
         difficulty, bank, firstScore:null,reviewIds:[],streaks:{},reviewRounds:0,
       };
       store(item);
+      partialRef.current=null;
       startSet(item);
-    } catch(e){setError(e instanceof Error?e.message:"تعذر إنشاء الاختبار.");}
-    finally {setBusy("");}
+    } catch(e) {
+      const errorMessage=e instanceof Error?e.message:"تعذر إنشاء الاختبار.";
+      setError(errorMessage);
+      if (partialRef.current?.key === key && partialRef.current.questions.length)
+        setNote("تم إنشاء "+partialRef.current.questions.length+" من "+count+
+          " سؤالًا. اضغط «إنشاء الاختبار وبدء الأسئلة» مجددًا لاستكمال الدفعات المتبقية.");
+    } finally {setBusy("");}
   }
   function finishRound() {
     if (!active) return;
@@ -174,6 +223,7 @@ export default function QuizStudio() {
     setDeleteId("");
   }
   function newQuiz(){
+    partialRef.current=null;
     setActive(null);setStage("setup");setLecture(null);setUpload(null);
     setAnswers({});setRound(0);setError("");setNote("");
   }
@@ -196,7 +246,7 @@ export default function QuizStudio() {
         <h3>إنشاء اختبار من محاضرة</h3>
         <label>ملف المحاضرة (PDF أو DOCX)
           <input aria-label="ملف المحاضرة" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            onChange={e=>{setUpload(e.target.files?.[0]||null);setLecture(null);setError("");}}/>
+            onChange={e=>{partialRef.current=null;setUpload(e.target.files?.[0]||null);setLecture(null);setError("");}}/>
         </label>
         <button className="button outline" disabled={!upload || !!busy} onClick={()=>void extract()}>
           استخراج المحاضرة
@@ -209,7 +259,7 @@ export default function QuizStudio() {
         <div className="quiz-form-grid">
           <label>عدد الأسئلة
             <select aria-label="عدد أسئلة الاختبار" value={count} onChange={e=>setCount(Number(e.target.value))}>
-              {[5,10,15,20].map(n=><option key={n} value={n}>{n} أسئلة</option>)}
+              {[5,10,15,20,25,30,35,40].map(n=><option key={n} value={n}>{n} أسئلة</option>)}
             </select>
           </label>
           <label>مستوى الأسئلة
@@ -223,7 +273,7 @@ export default function QuizStudio() {
             </select>
           </label>
         </div>
-        <p className="muted small">الدرجة من 100، وتوزّع بالتساوي على عدد الأسئلة. لا تظهر الإجابات الصحيحة حتى انتهاء الجولة.</p>
+        <p className="muted small">الدرجة من 100 وتوزّع بالتساوي على عدد الأسئلة. لا تظهر الإجابات الصحيحة حتى انتهاء الجولة. عند اختيار أكثر من 20 سؤالًا، يُنشأ الاختبار على دفعات لضمان اكتماله دون تكرار.</p>
         <button className="button primary" disabled={!lecture || !!busy} onClick={()=>void generate()}>
           إنشاء الاختبار وبدء الأسئلة
         </button>
