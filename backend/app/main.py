@@ -256,7 +256,7 @@ def revise_content(request: ReviseRequest, http_request: Request, authorization:
     return ai.revise(request)
 
 
-@app.post("/api/v1/quiz/extract", response_model=quiz.LectureExtract)
+@app.post("/api/v1/ai/quiz/extract", response_model=quiz.LectureExtract)
 async def quiz_extract(
     request: Request,
     file: UploadFile = File(...),
@@ -271,7 +271,7 @@ async def quiz_extract(
         await file.close()
 
 
-@app.post("/api/v1/quiz/generate", response_model=quiz.QuizSet)
+@app.post("/api/v1/ai/quiz/generate", response_model=quiz.QuizSet)
 def quiz_generate(
     payload: quiz.QuizRequest,
     request: Request,
