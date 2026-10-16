@@ -149,3 +149,82 @@ def test_endpoint_requires_ai_session_and_reuses_upload_text(monkeypatch):
 def test_invalid_quiz_settings_are_rejected(count,difficulty):
     with pytest.raises(ValueError):
         quiz.QuizRequest(source_text="[PAGE 1]\n"+SOURCE,count=count,difficulty=difficulty)
+
+
+def test_pdf_typography_and_line_wraps_are_supported_without_paraphrasing():
+    pages = {
+        7: "The findings of the ﬁnal workplace-research report were recorded "
+           "in a written report. Employees’ responses were analyzed.",
+        13: "This unrelated page discusses open public materials.",
+    }
+    hit = quiz._find_evidence(
+        "the findings of the final workplace research report were recorded "
+        "in a written report",
+        pages,
+    )
+    assert hit is not None
+    assert hit[0] == 7
+    assert "ﬁnal" in hit[1]
+    assert "workplace-research" in hit[1]
+    assert quiz._find_evidence(
+        "The findings were published in an oral presentation.", pages,
+    ) is None
+    assert quiz._find_evidence("in a made up document", pages) is None
+
+
+def test_unicode_case_spacing_and_arabic_diacritics_resolve_original_evidence():
+    pages = {
+        2: "The organization’s FINAL decision was written in the report.",
+        4: "تُكتَبُ النَّتائِجُ في التَّقريرِ الرَّسمِي للمؤسسة.",
+    }
+    assert quiz._find_evidence("The organization's final decision was written in the report", pages)[0] == 2
+    match = quiz._find_evidence("تكتب النتائج في التقرير الرسمي", pages)
+    assert match is not None
+    assert match[0] == 4
+    assert "التَّقريرِ" in match[1]
+
+
+def test_grounding_failures_retry_once_and_then_start_exam(monkeypatch):
+    monkeypatch.setattr(quiz.ai, "status", lambda: {"configured": True})
+    incorrect = mock_bank(5, quote="Unsupported medical claims not in the lecture.")
+    valid = mock_bank(5)
+    responses = iter([incorrect, valid])
+    payloads = []
+
+    def provider(client, payload):
+        payloads.append(payload.copy())
+        return json.dumps(next(responses))
+
+    monkeypatch.setattr(quiz, "_provider_quiz", provider)
+    generated = quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 1]\n" + SOURCE, count=5))
+    assert len(generated.questions) == 5
+    assert len(payloads) == 2
+    assert "validation_feedback" not in payloads[0]
+    assert "validation_feedback" in payloads[1]
+    assert generated.questions[0].source_quote in SOURCE
+
+
+def test_persistent_hallucinated_quotes_are_rejected_after_one_retry(monkeypatch):
+    monkeypatch.setattr(quiz.ai, "status", lambda: {"configured": True})
+    calls = []
+    def provider(client, payload):
+        calls.append(payload.copy())
+        return json.dumps(mock_bank(5, quote="Unsupported lecture statement that was not in the file."))
+
+    monkeypatch.setattr(quiz, "_provider_quiz", provider)
+    with pytest.raises(Exception) as error:
+        quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 1]\n" + SOURCE, count=5))
+    assert error.value.status_code == 502
+    assert "إعادة المحاولة تلقائيًا" in error.value.detail
+    assert len(calls) == 2
+
+
+def test_page_reference_is_canonicalized_using_actual_pdf_page_number(monkeypatch):
+    monkeypatch.setattr(quiz.ai, "status", lambda: {"configured": True})
+    data = mock_bank(5)
+    data["questions"][0]["source_quote"] = "THE HEART SENDS BLOOD THROUGH ARTERIES TO TISSUES"
+    data["questions"][0]["source_page"] = 22
+    monkeypatch.setattr(quiz, "_provider_quiz", lambda client, payload: json.dumps(data))
+    res = quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 6]\n" + SOURCE, count=5))
+    assert res.questions[0].source_page == 6
+    assert res.questions[0].source_quote == "The heart sends blood through arteries to tissues"
