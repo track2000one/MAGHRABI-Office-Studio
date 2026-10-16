@@ -30,8 +30,8 @@ QUOTES = [
 def docx_data():
     document = Document()
     document.add_heading("Lecture on circulation", 0)
-    for paragraph in SOURCE.split(". "):
-        document.add_paragraph(paragraph)
+    document.add_paragraph(SOURCE)
+    document.add_paragraph("Additional study note: " + SOURCE)
     result = BytesIO()
     document.save(result)
     return result.getvalue()
@@ -40,9 +40,9 @@ def docx_data():
 def pdf_data():
     doc = fitz.open()
     p = doc.new_page()
-    p.insert_text((50, 50), SOURCE[:800], fontsize=8)
+    p.insert_textbox(fitz.Rect(50, 50, 550, 780), SOURCE[:600], fontsize=10)
     p2 = doc.new_page()
-    p2.insert_text((50, 50), SOURCE[800:], fontsize=8)
+    p2.insert_textbox(fitz.Rect(50, 50, 550, 780), SOURCE[600:], fontsize=10)
     result = doc.tobytes()
     doc.close()
     return result
