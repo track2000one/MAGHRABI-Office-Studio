@@ -19,11 +19,11 @@ beforeEach(()=>{
   sessionStorage.clear();
   vi.stubGlobal("fetch",vi.fn(async(input:string|URL)=>{
     const path=String(input);
-    if(path.includes("/quiz/extract"))return new Response(JSON.stringify({
+    if(path.includes("/ai/quiz/extract"))return new Response(JSON.stringify({
       filename:"lecture.pdf",source_text:"[PAGE 1]\n"+lecture,pages:1,truncated:false,
       characters:lecture.length,
     }),{status:200,headers:{"Content-Type":"application/json"}});
-    if(path.includes("/quiz/generate"))return new Response(JSON.stringify({
+    if(path.includes("/ai/quiz/generate"))return new Response(JSON.stringify({
       title:"Circulation lecture practice",questions,
     }),{status:200,headers:{"Content-Type":"application/json"}});
     return new Response(JSON.stringify({configured:false,authenticated:false}),{status:200});
@@ -53,10 +53,10 @@ describe("Lecture Smart Quiz mastery experience",()=>{
     expect(screen.getByText("السؤال 1 من 5")).toBeVisible();
     expect(screen.queryByText("The lecture contains this fact and supports the answer.")).not.toBeInTheDocument();
     const calls=vi.mocked(fetch).mock.calls;
-    const upload=calls.find(([url])=>String(url).includes("/quiz/extract"))!;
+    const upload=calls.find(([url])=>String(url).includes("/ai/quiz/extract"))!;
     const body=upload[1]!.body as FormData;
     expect((body.get("file") as File).name).toBe("lecture.pdf");
-    const request=calls.find(([url])=>String(url).includes("/quiz/generate"))!;
+    const request=calls.find(([url])=>String(url).includes("/ai/quiz/generate"))!;
     expect(JSON.parse(request[1]!.body as string)).toMatchObject({count:5,difficulty:"hard",language:"ar"});
     expect(new Headers(request[1]!.headers).get("X-Maghrabi-Client")).toBe("studio");
     expect(user).toBeDefined();
