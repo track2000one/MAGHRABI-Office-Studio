@@ -102,7 +102,7 @@ export default function QuizStudio() {
     try {
       const form = new FormData();
       form.append("file",upload);
-      const info: Extracted = await (await api("/quiz/extract",{method:"POST",body:form})).json();
+      const info: Extracted = await (await api("/ai/quiz/extract",{method:"POST",body:form})).json();
       setLecture(info);
       setNote(info.truncated
         ? "المحاضرة طويلة؛ سيُبنى الاختبار من الجزء المستخرج فقط. لتغطية بقية الصفحات، قسّم المحاضرة إلى ملفات."
@@ -114,7 +114,7 @@ export default function QuizStudio() {
     if (!lecture) {setError("استخرج نص المحاضرة أولًا.");return;}
     setBusy("جارٍ إنشاء أسئلة مستندة إلى المحاضرة…");setError("");setNote("");
     try {
-      const bank: Bank = await (await api("/quiz/generate",jsonBody({
+      const bank: Bank = await (await api("/ai/quiz/generate",jsonBody({
         source_text:lecture.source_text,count,difficulty,language,
       }))).json();
       const item:SavedQuiz = {
