@@ -72,10 +72,10 @@ describe("Lecture Smart Quiz mastery experience",()=>{
       await generate();
       // Native controls have no reliable dimensions in JSDOM. Inspect the
       // exact rule in the checked-in stylesheet rather than browser metrics.
-      const radioRule=studioCss.match(/\\.quiz-choices\\s+\\.quiz-choice\\s+input\\[type="radio"\\]\\s*\\{([^}]*)\\}/)?.[1];
-      expect(radioRule).toMatch(/\\bwidth:\\s*18px\\s*;/);
-      expect(radioRule).toMatch(/\\bheight:\\s*18px\\s*;/);
-      expect(radioRule).toMatch(/\\bpadding:\\s*0\\s*;/);
+      const radioRule=studioCss.match(/\.quiz-choices\s+\.quiz-choice\s+input\[type="radio"\]\s*\{([^}]*)\}/)?.[1];
+      expect(radioRule).toMatch(/\bwidth:\s*18px\s*;/);
+      expect(radioRule).toMatch(/\bheight:\s*18px\s*;/);
+      expect(radioRule).toMatch(/\bpadding:\s*0\s*;/);
       const radios=screen.getAllByRole("radio");
       expect(radios).toHaveLength(4);
       for(const radio of radios){
