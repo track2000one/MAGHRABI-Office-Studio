@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 MAX_UPLOAD = 8 * 1024 * 1024
 MAX_PAGES = 80
 MAX_QUESTIONS = 40
+MAX_PASTED_CHARS = 100_000
 MAX_XML_UNCOMPRESSED = 40 * 1024 * 1024
 
 LETTER_INDEX = {
@@ -27,18 +28,24 @@ LETTER_INDEX = {
 }
 ARABIC_NUMBERS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 QUESTION = re.compile(
-    r"^\s*(?:(?:Q(?:uestion)?|السؤال|سؤال|س)\s*)?"
+    r"^\s*(?:(?:Q(?:uestion)?|السؤال|سؤال|س)\s*[#:]?\s*)?"
     r"([0-9٠-٩۰-۹]{1,3})\s*[\).:\-–،]\s*(.+?)\s*$", re.I)
 OPTION = re.compile(
     r"^\s*(?:([A-Da-dأاإآبجد])\s*[\).:\-–،]"
     r"|\(([A-Da-dأاإآبجد])\))\s*(.+?)\s*$")
 INLINE_ANSWER = re.compile(
-    r"^\s*(?:(?:correct\s+)?answer|الإجابة(?:\s+الصحيحة)?|الجواب|الحل)"
+    r"^\s*(?:(?:correct\s+)?answer|correct\s+(?:option|choice)|الإجابة(?:\s+الصحيحة)?|الجواب|الحل)"
     r"\s*[:：=\-]\s*([A-Da-dأاإآبجد1-4])\s*[).]?\s*$", re.I)
 KEY_START = re.compile(r"^(?:answer\s+key|answers?\s+sheet|مفتاح\s+الإجابات?|الإجابات\s+الصحيحة)\s*[:：]?$", re.I)
+EXPLANATION = re.compile(r"^(?:explanation|rationale|الشرح|التفسير|السبب)\s*[:：]", re.I)
 KEY_PAIR = re.compile(r"([0-9٠-٩۰-۹]{1,3})\s*[\).:\-=]\s*([A-Da-dأاإآبجد])\b",re.I)
 CORRECT_MARKER = re.compile(r"(?:\s*[✓✔✅]\s*|\s*\(\s*correct\s*\)\s*)$", re.I)
 SIMPLE_QUESTION = re.compile(r"[؟?]\s*$")
+
+
+class PastedQuizRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_PASTED_CHARS)
+    title: str = Field(default="اختبار منسوخ من ChatGPT", max_length=160)
 
 
 class ImportedQuestion(BaseModel):
@@ -127,8 +134,38 @@ def _lines(raw: bytes, filename: str) -> tuple[list[tuple[int,str]],int]:
     return result,pages
 
 
+def _clean_pasted_line(text: str) -> str:
+    """Remove common Markdown wrappers without rewriting question content."""
+    text = text.strip()
+    text = re.sub(r"^\s*(?:>\s*|[-*•]\s+|#{1,6}\s+)", "", text)
+    # ChatGPT often uses **1. Question**, **A)** and **Answer: B**.
+    text = re.sub(r"\*\*|__", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def parse_text_questions(text: str, title: str) -> ImportedQuestions:
+    """Import a pasted ChatGPT answer without an AI provider request."""
+    if not text or not text.strip():
+        raise HTTPException(422, "الصق الأسئلة في المربع أولًا.")
+    if len(text) > MAX_PASTED_CHARS:
+        raise HTTPException(413, "عدد أحرف الأسئلة المنسوخة يتجاوز 100 ألف حرف.")
+    heading = title.strip()[:160] or "اختبار منسوخ من ChatGPT"
+    cleaned = [_clean_pasted_line(line) for line in text.splitlines()]
+    lines = [(1, line) for line in cleaned if line and line not in ("```", "---")]
+    if not lines:
+        raise HTTPException(422, "لم يُعثر على أسئلة نصية في المحتوى المنسوخ.")
+    return _parse_lines(lines, 1, heading, filename=heading + ".txt")
+
+
 def parse_questions(raw: bytes, filename: str) -> ImportedQuestions:
-    lines,pages=_lines(raw,filename)
+    lines, pages = _lines(raw, filename)
+    return _parse_lines(lines, pages, filename.rsplit(".", 1)[0][:160], filename=filename)
+
+
+def _parse_lines(
+    lines: list[tuple[int, str]], pages: int, title: str, *, filename: str
+) -> ImportedQuestions:
     parsed: list[ImportedQuestion]=[]
     keys: dict[int,int]={}
     current_number: int | None=None
@@ -164,6 +201,8 @@ def parse_questions(raw: bytes, filename: str) -> ImportedQuestions:
             finish()
             in_key=True
             continue
+        if EXPLANATION.match(text):
+            continue  # Explanations are not additional answer choices.
         if in_key:
             for number,answer in KEY_PAIR.findall(text):
                 idx=_answer(answer)
@@ -240,7 +279,7 @@ def parse_questions(raw: bytes, filename: str) -> ImportedQuestions:
     if missing:
         warnings.append(f"{missing} سؤالًا دون مفتاح إجابة؛ حدّد الإجابة الصحيحة يدويًا قبل بدء اختبار مصحّح.")
     return ImportedQuestions(
-        filename=filename[:180],title=filename.rsplit(".",1)[0][:160],
+        filename=filename[:180],title=title,
         questions=unique,skipped=skipped,detected_answers=len(unique)-missing,
         warnings=warnings,pages=pages,
     )

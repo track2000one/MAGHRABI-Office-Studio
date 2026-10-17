@@ -27,7 +27,8 @@ async function upload(){
   const user=userEvent.setup();
   const onAccept=vi.fn();
   render(<ReadyQuizImport onAccept={onAccept}/>);
-  await user.upload(screen.getByLabelText("ملف أسئلة جاهزة"),
+  await user.click(screen.getByRole("button",{name:"رفع ملف Word أو PDF"}));
+    await user.upload(screen.getByLabelText("ملف أسئلة جاهزة"),
     new File(["questions"],"questions.docx",{
       type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     }));
@@ -74,6 +75,7 @@ describe("Ready MCQ import and review",()=>{
       status:200,headers:{"Content-Type":"application/json"},
     }));
     render(<ReadyQuizImport onAccept={onAccept}/>);
+    await user.click(screen.getByRole("button",{name:"رفع ملف Word أو PDF"}));
     await user.upload(screen.getByLabelText("ملف أسئلة جاهزة"),
       new File(["questions"],"ready.docx",{type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}));
     await user.click(screen.getByRole("button",{name:"استخراج وترتيب الأسئلة"}));
@@ -99,6 +101,7 @@ describe("Ready MCQ import and review",()=>{
     const user=userEvent.setup();
     render(<QuizStudio/>);
     await user.click(screen.getByRole("button",{name:"استيراد أسئلة جاهزة من Word أو PDF"}));
+    await user.click(screen.getByRole("button",{name:"رفع ملف Word أو PDF"}));
     await user.upload(screen.getByLabelText("ملف أسئلة جاهزة"),
       new File(["questions"],"ready.docx",{type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}));
     await user.click(screen.getByRole("button",{name:"استخراج وترتيب الأسئلة"}));
@@ -135,6 +138,8 @@ describe("Ready MCQ import and review",()=>{
     render(<App/>);
     await user.click(screen.getByRole("button",{name:"الاختبارات الذكية"}));
     await user.click(screen.getByRole("button",{name:"استيراد أسئلة جاهزة من Word أو PDF"}));
+    expect(screen.getByLabelText("نص الأسئلة المنسوخة من ChatGPT")).toBeVisible();
+    await user.click(screen.getByRole("button",{name:"رفع ملف Word أو PDF"}));
     expect(screen.getByLabelText("ملف أسئلة جاهزة")).toBeVisible();
     expect(screen.queryByLabelText("ملف المحاضرة")).not.toBeInTheDocument();
   });
