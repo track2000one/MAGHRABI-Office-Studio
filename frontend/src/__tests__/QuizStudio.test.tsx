@@ -90,6 +90,41 @@ describe("Lecture Smart Quiz mastery experience",()=>{
       style.remove();
     }
   });
+  it("shows valid exams while clearly marking unsupported source quotes rather than inventing pages",async()=>{
+    const user=userEvent.setup();
+    const unverified=questions.map((question,i)=>({
+      ...question,source_quote:i===0?"":"The circulation lecture describes arteries, veins and capillaries.",
+      source_page:i===0?0:1,source_verified:i!==0,
+    }));
+    vi.mocked(fetch).mockImplementation(async(input)=>{
+      const path=String(input);
+      if(path.includes("/ai/quiz/extract")) return new Response(JSON.stringify({
+        filename:"lecture.pdf",source_text:"[PAGE 1]\n"+lecture,pages:1,
+        truncated:false,characters:lecture.length,
+      }),{status:200,headers:{"Content-Type":"application/json"}});
+      if(path.includes("/ai/quiz/generate")) return new Response(JSON.stringify({
+        title:"Practice test with one unverified citation",questions:unverified,
+      }),{status:200,headers:{"Content-Type":"application/json"}});
+      return new Response(JSON.stringify({configured:false,authenticated:false}),{status:200});
+    });
+    render(<QuizStudio/>);
+    await user.upload(screen.getByLabelText("ملف المحاضرة"),
+      new File([lecture],"lecture.pdf",{type:"application/pdf"}));
+    await user.click(screen.getByRole("button",{name:"استخراج المحاضرة"}));
+    await screen.findByText(/تم استخراج النص/);
+    await user.selectOptions(screen.getByLabelText("عدد أسئلة الاختبار"),"5");
+    await user.click(screen.getByRole("button",{name:"إنشاء الاختبار وبدء الأسئلة"}));
+    expect(await screen.findByText("السؤال 1 من 5")).toBeVisible();
+    expect(screen.getByText(/لن تُعرض لهذه الأسئلة صفحات أو اقتباسات غير مؤكدة/)).toBeVisible();
+    for(let i=0;i<5;i++){
+      await user.click(screen.getByText(i===0?"Wrong first 0":"Correct choice "+i));
+      await user.click(screen.getByRole("button",{name:i===4?"إنهاء وتصحيح الجولة":"السؤال التالي"}));
+    }
+    expect(screen.getByText(/لا يوجد اقتباس موثق لهذا السؤال/)).toBeVisible();
+    expect(screen.queryByText(/المصدر: lecture.pdf · صفحة 0/)).not.toBeInTheDocument();
+    expect(screen.getByText(/قد تكون الإجابة صحيحة، لكن يُنصح بمراجعة المحتوى الأصلي/)).toBeVisible();
+  });
+
   it("grades first attempt, repeats only wrong answers, and requires two correct reviews",async()=>{
     const user=await generate();
     for(let i=0;i<5;i++)await answer(user,i,i===0?1:0,i===4);
