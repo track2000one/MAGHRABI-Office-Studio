@@ -10,7 +10,6 @@ import type {QuizProject as SavedQuiz,QuizQuestion as Question} from "./quizLibr
 type Bank = {title:string;questions:Question[]};
 type Extracted = {filename: string; source_text: string; pages: number; truncated: boolean; characters: number};
 type Stage = "setup" | "exam" | "results";
-const MAX_EXAM_QUESTIONS=40;
 const BATCH_SIZE=10;
 const levels: Record<string,string>={easy:"سهل",medium:"متوسط",hard:"صعب",mixed:"متنوع"};
 function roundPosition(question: Question, displayIndex: number, round: number) {
@@ -73,9 +72,15 @@ export default function QuizStudio() {
   function renameProject(item:SavedQuiz) {
     const title=renameTitle.trim();
     if(!title||title.length>180){setError("أدخل اسمًا للمحاضرة لا يتجاوز 180 حرفًا.");return;}
-    if(store({...item,title,updatedAt:new Date().toISOString()})){
+    try {
+      const renamed={...item,title,updatedAt:new Date().toISOString()};
+      const next=readQuizProjects().map(q=>q.id===item.id?renamed:q);
+      persistQuizProjects(next);
+      setSaved(next);
+      setActive(current=>current?.id===item.id?renamed:current);
+      setNote("تم تحديث اسم مشروع الاختبار.");
       setRenameId("");setRenameTitle("");
-    }
+    }catch(e){setError(e instanceof Error?e.message:"تعذّر تغيير الاسم.");}
   }
   function downloadBackup() {
     try {
@@ -242,7 +247,7 @@ export default function QuizStudio() {
     };
     setWrong(failed);
     setLastResult({correct,total:indices.length,points});
-    store(item);
+    if(!store(item))setActive(item);
     setStage("results");
   }
   function retry() {
