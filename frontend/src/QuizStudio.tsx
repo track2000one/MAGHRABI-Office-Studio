@@ -2,6 +2,7 @@ import {useEffect, useMemo, useRef, useState} from "react";
 import {api, jsonBody} from "./api";
 import ReadyQuizImport from "./ReadyQuizImport";
 import type {ReadyImport} from "./ReadyQuizImport";
+import {readPendingQuiz,writePendingQuiz,clearPendingQuiz} from "./quizPending";
 
 import {MAX_QUIZ_PROJECTS,readQuizProjects,persistQuizProjects,
   exportQuizBackup,parseQuizBackup,mergeQuizBackups,MAX_BACKUP_SIZE} from "./quizLibrary";
@@ -17,13 +18,14 @@ function roundPosition(question: Question, displayIndex: number, round: number) 
 }
 
 export default function QuizStudio() {
+  const [initialPending] = useState(readPendingQuiz);
   const [saved,setSaved] = useState<SavedQuiz[]>(readQuizProjects);
   const [active,setActive] = useState<SavedQuiz | null>(null);
   const [upload,setUpload] = useState<File | null>(null);
-  const [lecture,setLecture] = useState<Extracted | null>(null);
-  const [count,setCount] = useState(10);
-  const [difficulty,setDifficulty] = useState("mixed");
-  const [language,setLanguage] = useState<"ar"|"en">("ar");
+  const [lecture,setLecture] = useState<Extracted | null>(initialPending?.lecture??null);
+  const [count,setCount] = useState(initialPending?.count??10);
+  const [difficulty,setDifficulty] = useState(initialPending?.difficulty??"mixed");
+  const [language,setLanguage] = useState<"ar"|"en">(initialPending?.language??"ar");
   const [stage,setStage] = useState<Stage>("setup");
   const [setupMode,setSetupMode] = useState<"ai"|"ready">("ai");
   const [round,setRound] = useState(0);
@@ -34,7 +36,7 @@ export default function QuizStudio() {
   const [lastResult,setLastResult] = useState({correct:0,total:0,points:0});
   const [busy,setBusy] = useState("");
   const [error,setError] = useState("");
-  const [note,setNote] = useState("");
+  const [note,setNote] = useState(initialPending ? "استعدنا "+initialPending.questions.length+" سؤالًا من أصل "+initialPending.count+" بعد انقطاع التوليد. اضغط «إنشاء الاختبار وبدء الأسئلة» لاستكمال الباقي." : "");
   const [deleteId,setDeleteId] = useState("");
   const [libraryQuery,setLibraryQuery] = useState("");
   const [renameId,setRenameId] = useState("");
@@ -42,7 +44,13 @@ export default function QuizStudio() {
   const [backupBusy,setBackupBusy] = useState(false);
   // Preserve completed batches in the current tab if a later provider request fails.
   // Source text is never persisted as part of the saved question bank.
-  const partialRef = useRef<{key:string;title:string;questions:Question[]} | null>(null);
+  const partialRef = useRef<{key:string;title:string;questions:Question[]} | null>(
+    initialPending ? {
+      key:JSON.stringify([initialPending.lecture.source_text,initialPending.count,
+        initialPending.difficulty,initialPending.language]),
+      title:initialPending.title,questions:initialPending.questions,
+    } : null
+  );
   const activeQuestionId = indices[at];
   const question = active && activeQuestionId !== undefined ? active.bank.questions[activeQuestionId] : null;
   const totalQuestions = active?.bank.questions.length || 0;
@@ -124,6 +132,7 @@ export default function QuizStudio() {
   async function extract() {
     if (!upload) {setError("اختر ملف PDF أو DOCX للمحاضرة.");return;}
     if (upload.size > 8*1024*1024 || upload.size === 0) {setError("حجم المحاضرة يجب ألا يتجاوز 8 ميجابايت.");return;}
+    clearPendingQuiz();partialRef.current=null;
     setBusy("جارٍ استخراج نص المحاضرة…");setError("");setNote("");setLecture(null);
     try {
       const form = new FormData();
@@ -177,6 +186,10 @@ export default function QuizStudio() {
         if (!title) title=batch.title;
         collected.push(...batch.questions);
         partialRef.current={key,title,questions:[...collected]};
+        if (count>20 && collected.length<count) {
+          writePendingQuiz({savedAt:Date.now(),lecture,count,difficulty,language,
+            title,questions:[...collected]});
+        }
       }
       if (collected.length !== count)
         throw new Error("لم تكتمل جميع أسئلة الاختبار. حاول مجددًا.");
@@ -190,13 +203,15 @@ export default function QuizStudio() {
       };
       if(!store(item))return;
       partialRef.current=null;
+      clearPendingQuiz();
       startSet(item);
     } catch(e) {
       const errorMessage=e instanceof Error?e.message:"تعذر إنشاء الاختبار.";
       setError(errorMessage);
       if (partialRef.current?.key === key && partialRef.current.questions.length)
         setNote("تم إنشاء "+partialRef.current.questions.length+" من "+count+
-          " سؤالًا. اضغط «إنشاء الاختبار وبدء الأسئلة» مجددًا لاستكمال الدفعات المتبقية.");
+          " سؤالًا. لم تضِع الأسئلة المكتملة. اضغط «إنشاء الاختبار وبدء الأسئلة» مجددًا لاستكمال الباقي."+
+          " ويمكن استعادة الدفعات المكتملة بعد تحديث هذه الصفحة خلال ساعتين من علامة التوقف.");
     } finally {setBusy("");}
   }
   function acceptReady(data: ReadyImport, launch: boolean) {
@@ -274,6 +289,7 @@ export default function QuizStudio() {
   }
   function newQuiz(){
     partialRef.current=null;
+    clearPendingQuiz();
     setActive(null);setStage("setup");setLecture(null);setUpload(null);
     setAnswers({});setRound(0);setError("");setNote("");
   }
@@ -307,7 +323,7 @@ export default function QuizStudio() {
         <h3>إنشاء اختبار من محاضرة</h3>
         <label>ملف المحاضرة (PDF أو DOCX)
           <input aria-label="ملف المحاضرة" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            onChange={e=>{partialRef.current=null;setUpload(e.target.files?.[0]||null);setLecture(null);setError("");}}/>
+            onChange={e=>{clearPendingQuiz();partialRef.current=null;setUpload(e.target.files?.[0]||null);setLecture(null);setError("");setNote("");}}/>
         </label>
         <button className="button outline" disabled={!upload || !!busy} onClick={()=>void extract()}>
           استخراج المحاضرة
@@ -319,17 +335,17 @@ export default function QuizStudio() {
         </div>}
         <div className="quiz-form-grid">
           <label>عدد الأسئلة
-            <select aria-label="عدد أسئلة الاختبار" value={count} onChange={e=>setCount(Number(e.target.value))}>
+            <select aria-label="عدد أسئلة الاختبار" value={count} onChange={e=>{clearPendingQuiz();partialRef.current=null;setCount(Number(e.target.value));}}>
               {[5,10,15,20,25,30,35,40].map(n=><option key={n} value={n}>{n} أسئلة</option>)}
             </select>
           </label>
           <label>مستوى الأسئلة
-            <select aria-label="مستوى صعوبة الأسئلة" value={difficulty} onChange={e=>setDifficulty(e.target.value)}>
+            <select aria-label="مستوى صعوبة الأسئلة" value={difficulty} onChange={e=>{clearPendingQuiz();partialRef.current=null;setDifficulty(e.target.value);}}>
               {Object.entries(levels).map(([value,title])=><option value={value} key={value}>{title}</option>)}
             </select>
           </label>
           <label>لغة الأسئلة
-            <select aria-label="لغة أسئلة الاختبار" value={language} onChange={e=>setLanguage(e.target.value as "ar"|"en")}>
+            <select aria-label="لغة أسئلة الاختبار" value={language} onChange={e=>{clearPendingQuiz();partialRef.current=null;setLanguage(e.target.value as "ar"|"en");}}>
               <option value="ar">العربية</option><option value="en">English</option>
             </select>
           </label>
