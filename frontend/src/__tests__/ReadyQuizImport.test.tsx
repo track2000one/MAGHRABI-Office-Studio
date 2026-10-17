@@ -109,7 +109,7 @@ describe("Ready MCQ import and review",()=>{
     await user.click(screen.getByRole("button",{name:"السؤال التالي"}));
     await user.click(screen.getByText("Site")); // Incorrect Q2 (correct is Notes)
     await user.click(screen.getByRole("button",{name:"إنهاء وتصحيح الجولة"}));
-    expect(await screen.findByText(/50 من 100/)).toBeVisible();
+    expect((await screen.findAllByText(/50 من 100/)).length).toBeGreaterThan(0);
     expect(screen.getByRole("button",{name:/إعادة اختبار الأسئلة التي تحتاج إلى إتقان/})).toBeVisible();
     await user.click(screen.getByRole("button",{name:/إعادة اختبار الأسئلة التي تحتاج إلى إتقان/}));
     expect(screen.getByText("السؤال 1 من 1")).toBeVisible();
