@@ -2180,3 +2180,16 @@ textarea::placeholder {
   .ready-import {padding:17px;}
   .ready-import-question {padding:12px;}
 }
+
+
+/* Prepared student quiz: compact launch dashboard, answer key hidden by default */
+.ready-exam-status {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;padding:18px;border-radius:12px;border:1px solid #baded5;background:#f1faf7;}
+.ready-exam-status > div:first-child {flex:1;min-width:215px;}
+.ready-exam-status strong {display:block;font-size:16px;color:#126f64;}
+.ready-exam-status p {margin:6px 0 0;line-height:1.7;font-size:13px;}
+.ready-exam-status.needs-answers {border-color:#ead4b3;background:#fffaf2;}
+.ready-exam-status.needs-answers strong {color:#956e2e;}
+.ready-exam-quick-actions {display:flex;flex-wrap:wrap;gap:9px;align-items:center;}
+.ready-exam-quick-actions .button {width:auto;}
+.ready-review-toggle {width:max-content;max-width:100%;}
+@media(max-width:610px){.ready-exam-quick-actions,.ready-exam-quick-actions .button,.ready-review-toggle {width:100%;}}
