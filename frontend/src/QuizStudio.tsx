@@ -1,5 +1,7 @@
 import {useEffect, useMemo, useRef, useState} from "react";
 import {api, jsonBody} from "./api";
+import ReadyQuizImport from "./ReadyQuizImport";
+import type {ReadyImport} from "./ReadyQuizImport";
 
 type Question = {
   question: string;
@@ -22,6 +24,7 @@ type SavedQuiz = {
   reviewIds: number[];
   streaks: Record<number, number>;
   reviewRounds: number;
+  origin?: "generated" | "imported";
 };
 type Extracted = {filename: string; source_text: string; pages: number; truncated: boolean; characters: number};
 type Stage = "setup" | "exam" | "results";
@@ -38,7 +41,7 @@ function readSaved(): SavedQuiz[] {
       if (!item || typeof item !== "object") return false;
       const v = item as Partial<SavedQuiz>;
       return typeof v.id === "string" && typeof v.title === "string" &&
-        Array.isArray(v.bank?.questions) && v.bank.questions.length >= 5 &&
+        Array.isArray(v.bank?.questions) && v.bank.questions.length >= 1 &&
         v.bank.questions.length <= MAX_EXAM_QUESTIONS && Array.isArray(v.reviewIds) &&
         typeof v.streaks === "object" && v.streaks !== null;
     }).slice(0,MAX_BANKS);
@@ -57,6 +60,7 @@ export default function QuizStudio() {
   const [difficulty,setDifficulty] = useState("mixed");
   const [language,setLanguage] = useState<"ar"|"en">("ar");
   const [stage,setStage] = useState<Stage>("setup");
+  const [setupMode,setSetupMode] = useState<"ai"|"ready">("ai");
   const [round,setRound] = useState(0);
   const [indices,setIndices] = useState<number[]>([]);
   const [at,setAt] = useState(0);
@@ -176,6 +180,27 @@ export default function QuizStudio() {
           " سؤالًا. اضغط «إنشاء الاختبار وبدء الأسئلة» مجددًا لاستكمال الدفعات المتبقية.");
     } finally {setBusy("");}
   }
+  function acceptReady(data: ReadyImport, launch: boolean) {
+    const bank: Bank = {
+      title: data.title.trim(),
+      questions: data.questions.map(q=>({
+        question: q.question.trim(), options: q.options.map(option=>option.trim()),
+        correct_index: q.correct_index as number,
+        explanation: "الإجابة الصحيحة محددة من مفتاح الإجابات أو تمت مراجعتها يدويًا.",
+        source_quote: "",
+        source_page: q.source_page,
+      })),
+    };
+    const item: SavedQuiz = {
+      id: crypto.randomUUID(),title:bank.title,filename:data.filename,
+      createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
+      difficulty:"imported",bank,firstScore:null,reviewIds:[],streaks:{},
+      reviewRounds:0,origin:"imported",
+    };
+    store(item);
+    if(launch)startSet(item);
+    else setNote("تم حفظ الأسئلة المستوردة في «اختباراتي المحفوظة». يمكنك حلها لاحقًا.");
+  }
   function finishRound() {
     if (!active) return;
     const failed=indices.filter(id=>answers[id] !== active.bank.questions[id].correct_index);
@@ -241,7 +266,18 @@ export default function QuizStudio() {
     {error && <div className="banner error" role="alert">{error}<button onClick={()=>setError("")} aria-label="إغلاق الخطأ">×</button></div>}
     {note && <p className="soft-note" role="status">{note}</p>}
     {busy && <div className="banner loading" role="status"><span className="spinner"/>{busy}</div>}
-    {stage === "setup" && <div className="quiz-setup-grid">
+    {stage === "setup" && <>
+      <div className="quiz-mode-tabs" role="group" aria-label="طريقة إعداد الاختبار">
+        <button type="button" className={"button "+(setupMode==="ai"?"primary":"outline")}
+          onClick={()=>{setSetupMode("ai");setError("");}}>
+          توليد أسئلة من محاضرة
+        </button>
+        <button type="button" className={"button "+(setupMode==="ready"?"primary":"outline")}
+          onClick={()=>{setSetupMode("ready");setError("");}}>
+          استيراد أسئلة جاهزة من Word أو PDF
+        </button>
+      </div>
+      {setupMode==="ready" ? <ReadyQuizImport onAccept={acceptReady}/> : <div className="quiz-setup-grid">
       <section className="panel quiz-settings">
         <h3>إنشاء اختبار من محاضرة</h3>
         <label>ملف المحاضرة (PDF أو DOCX)
@@ -286,6 +322,7 @@ export default function QuizStudio() {
         <div className="quiz-advice-step"><strong>03</strong><div><b>تثبيت المعلومات</b><p>إعادة الأسئلة الخاطئة حتى تجيب عنها صحيحًا مرتين متتاليتين.</p></div></div>
       </aside>
     </div>}
+    </>}
     {stage === "exam" && active && question && <section className="panel quiz-exam">
       <div className="quiz-topline"><span>{round===0?"الاختبار الأساسي":"جولة إتقان الأخطاء"}</span><strong>السؤال {at+1} من {indices.length}</strong></div>
       <div className="quiz-progress"><div style={{width:((at+1)/indices.length)*100+"%"}}/></div>
@@ -329,8 +366,8 @@ export default function QuizStudio() {
               <strong>{q.question}</strong>
               <p><b>الإجابة الصحيحة:</b> {q.options[q.correct_index]}</p>
               <p><b>التفسير:</b> {q.explanation}</p>
-              <blockquote>{q.source_quote}</blockquote>
-              <small className="muted">المصدر: {active.filename} · {q.source_page===1?"المقطع المرجعي 1 / الصفحة 1":"صفحة "+q.source_page}</small>
+              {q.source_quote && <blockquote>{q.source_quote}</blockquote>}
+              <small className="muted">المصدر: {active.filename} · {active.origin==="imported" ? (active.filename.toLowerCase().endsWith(".pdf")?"صفحة "+q.source_page:"مستند Word") : (q.source_page===1?"المقطع المرجعي 1 / الصفحة 1":"صفحة "+q.source_page)}</small>
             </article>;
           })}
         </div>
@@ -344,7 +381,7 @@ export default function QuizStudio() {
       {saved.length===0 ? <p className="muted">عند إنشاء أول اختبار ستجده هنا لتعود إليه لاحقًا.</p>
         : <div className="quiz-saved-grid">{saved.map(item=><article className="quiz-saved-card" key={item.id}>
           <strong>{item.title}</strong>
-          <small>{item.filename} · {item.bank.questions.length} سؤال · {levels[item.difficulty]||item.difficulty}</small>
+          <small>{item.filename} · {item.bank.questions.length} سؤال · {item.origin==="imported"?"أسئلة مستوردة":levels[item.difficulty]||item.difficulty}</small>
           <p className="muted small">{item.firstScore===null?"لم يُنهَ الاختبار بعد":"الدرجة الأولى "+item.firstScore+"%"} ·
             {item.reviewIds.length?" "+item.reviewIds.length+" سؤال يحتاج مراجعة":" لا توجد أسئلة متبقية للمراجعة"}</p>
           <div className="quiz-saved-actions">
