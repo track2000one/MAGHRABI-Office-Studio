@@ -304,3 +304,85 @@ def test_large_exam_batch_rejects_above_40_questions():
     with pytest.raises(ValueError):
         quiz.QuizRequest(source_text="[PAGE 1]\n"+SOURCE,count=10,
                          avoid_questions=["a"] * 41)
+
+
+def test_gemini_transient_503_retries_with_bounded_backoff(monkeypatch):
+    import httpx
+    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "dummy-test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "test-gemini-model")
+    delays = []
+    monkeypatch.setattr(quiz.time,"sleep",lambda seconds: delays.append(seconds))
+    statuses = iter((503,503,200))
+    attempts=[]
+    def handler(request):
+        assert "x-goog-api-key" in request.headers
+        attempts.append(request)
+        code=next(statuses)
+        if code==200:
+            return httpx.Response(200,json={"candidates":[{
+                "finishReason":"STOP","content":{"parts":[{"text":json.dumps(mock_bank(5))}]}
+            }]})
+        return httpx.Response(code,json={"error":{"status":"UNAVAILABLE"}})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result=quiz._provider_quiz(client,{"count":5,"lecture_text":"test"})
+    assert len(attempts)==3
+    assert delays==[1.5,3.0]
+    assert json.loads(result)["title"]=="Practice from circulation lecture"
+
+
+def test_gemini_retry_after_is_capped_and_quota_429_never_retried(monkeypatch):
+    import httpx
+    monkeypatch.setenv("AI_PROVIDER","gemini")
+    monkeypatch.setenv("GEMINI_API_KEY","dummy")
+    monkeypatch.setenv("GEMINI_MODEL","test-model")
+    delays=[]
+    monkeypatch.setattr(quiz.time,"sleep",lambda value:delays.append(value))
+    attempts=[]
+    def busy(request):
+        attempts.append(request)
+        return httpx.Response(503,headers={"Retry-After":"120"},
+                              json={"error":{"status":"UNAVAILABLE"}})
+    with httpx.Client(transport=httpx.MockTransport(busy)) as client:
+        with pytest.raises(Exception) as exc:
+            quiz._provider_quiz(client,{"count":5,"lecture_text":"test"})
+    assert exc.value.status_code==502
+    assert "503" in exc.value.detail
+    assert len(attempts)==3 and delays==[6.0,6.0]
+
+    attempts.clear()
+    delays.clear()
+    def quota(request):
+        attempts.append(request)
+        return httpx.Response(429,json={"error":{"status":"RESOURCE_EXHAUSTED"}})
+    with httpx.Client(transport=httpx.MockTransport(quota)) as client:
+        with pytest.raises(Exception) as exc:
+            quiz._provider_quiz(client,{"count":5,"lecture_text":"test"})
+    assert exc.value.status_code==429
+    assert len(attempts)==1
+    assert delays==[]
+
+
+def test_gemini_400_does_not_retry_transiently_but_can_fallback_schema(monkeypatch):
+    import httpx
+    monkeypatch.setenv("AI_PROVIDER","gemini")
+    monkeypatch.setenv("GEMINI_API_KEY","dummy")
+    monkeypatch.setenv("GEMINI_MODEL","test-model")
+    delays=[]
+    monkeypatch.setattr(quiz.time,"sleep",lambda value:delays.append(value))
+    requests=[]
+    def handler(request):
+        requests.append(json.loads(request.content))
+        if len(requests)==1:
+            return httpx.Response(400,json={
+                "error":{"message":"responseFormat is not supported"}})
+        return httpx.Response(200,json={"candidates":[{
+            "finishReason":"STOP","content":{"parts":[{"text":json.dumps(mock_bank(5))}]}
+        }]})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result=quiz._provider_quiz(client,{"count":5,"lecture_text":"test"})
+    assert len(requests)==2
+    assert delays==[]
+    assert "responseFormat" in requests[0]["generationConfig"]
+    assert "responseMimeType" in requests[1]["generationConfig"]
+    assert len(json.loads(result)["questions"])==5

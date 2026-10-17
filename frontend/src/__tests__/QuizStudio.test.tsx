@@ -189,6 +189,105 @@ describe("Lecture Smart Quiz mastery experience",()=>{
     render(<QuizStudio/>);
     expect(screen.getByText(/40 سؤال/)).toBeVisible();
   });
+  it("recovers a 40-question exam after Gemini 503, refresh and retry without losing the first ten",async()=>{
+    let outage=true;
+    const starts:number[]=[];
+    vi.mocked(fetch).mockImplementation(async(input,init)=>{
+      const url=String(input);
+      if(url.includes("/ai/quiz/extract"))return new Response(JSON.stringify({
+        filename:"Week 4-Chapter7.pdf",source_text:"[PAGE 1]\n"+lecture,
+        pages:24,truncated:false,characters:lecture.length,
+      }),{status:200,headers:{"Content-Type":"application/json"}});
+      if(url.includes("/ai/quiz/generate")){
+        const inputData=JSON.parse(init!.body as string) as {count:number;avoid_questions:string[]};
+        const before=inputData.avoid_questions.length;
+        starts.push(before);
+        if(before===10 && outage)return new Response(JSON.stringify({
+          detail:"مزود GEMINI يواجه خطأً بالخدمة (503). حاول مرة أخرى لاحقًا.",
+        }),{status:502,headers:{"Content-Type":"application/json"}});
+        return new Response(JSON.stringify({
+          title:"Week 4 quiz",
+          questions:Array.from({length:inputData.count},(_,i)=>({
+            question:"What lecture chapter concept corresponds to practice item number "+(before+i+1)+"?",
+            options:["Option One","Option Two","Option Three","Option Four"],
+            correct_index:0,
+            explanation:"The requested answer follows directly from the lecture's content.",
+            source_quote:"",source_page:0,source_verified:false,
+          })),
+        }),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      return new Response("{}",{status:200});
+    });
+    const user=userEvent.setup();
+    render(<QuizStudio/>);
+    await user.upload(screen.getByLabelText("ملف المحاضرة"),new File(
+      [lecture],"Week 4-Chapter7.pdf",{type:"application/pdf"}));
+    await user.click(screen.getByRole("button",{name:"استخراج المحاضرة"}));
+    await screen.findByText(/تم استخراج النص/);
+    await user.selectOptions(screen.getByLabelText("عدد أسئلة الاختبار"),"40");
+    await user.click(screen.getByRole("button",{name:"إنشاء الاختبار وبدء الأسئلة"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent("503");
+    expect(screen.getByText(/لم تضِع الأسئلة المكتملة/)).toBeVisible();
+    const partial=JSON.parse(sessionStorage.getItem("maghrabi-office-pending-quiz-v1")||"{}");
+    expect(partial.questions).toHaveLength(10);
+    expect(partial.lecture.filename).toBe("Week 4-Chapter7.pdf");
+    expect(starts).toEqual([0,10]);
+    cleanup(); // Simulates a full tab refresh while same sessionStorage survives.
+    outage=false;
+    render(<QuizStudio/>);
+    expect(screen.getByText(/استعدنا 10 سؤالًا من أصل 40/)).toBeVisible();
+    expect(screen.getByText("Week 4-Chapter7.pdf")).toBeVisible();
+    await user.click(screen.getByRole("button",{name:"إنشاء الاختبار وبدء الأسئلة"}));
+    expect(await screen.findByText("السؤال 1 من 40")).toBeVisible();
+    expect(starts).toEqual([0,10,10,20,30]);
+    const stored=JSON.parse(localStorage.getItem("maghrabi-office-quiz-banks-v1")||"[]");
+    expect(stored[0].bank.questions).toHaveLength(40);
+    expect(stored[0].title).toBe("Week 4-Chapter7");
+    expect(sessionStorage.getItem("maghrabi-office-pending-quiz-v1")).toBeNull();
+  });
+
+  it("resumes a 25-question exam from the last five questions after two full batches",async()=>{
+    const starts:number[]=[];
+    let failing=true;
+    vi.mocked(fetch).mockImplementation(async(input,init)=>{
+      const url=String(input);
+      if(url.includes("/ai/quiz/extract"))return new Response(JSON.stringify({
+        filename:"topics.pdf",source_text:"[PAGE 1]\n"+lecture,
+        pages:1,truncated:false,characters:lecture.length,
+      }),{status:200,headers:{"Content-Type":"application/json"}});
+      if(url.includes("/ai/quiz/generate")){
+        const inputData=JSON.parse(init!.body as string) as {count:number;avoid_questions:string[]};
+        const before=inputData.avoid_questions.length;
+        starts.push(inputData.count);
+        if(before===20 && failing)return new Response(JSON.stringify({
+          detail:"Gemini 503",
+        }),{status:502,headers:{"Content-Type":"application/json"}});
+        return new Response(JSON.stringify({
+          title:"Lecture subjects",
+          questions:Array.from({length:inputData.count},(_,i)=>({
+            question:"What lecture chapter concept corresponds to practice item number "+(before+i+1)+"?",
+            options:["A","B","C","D"],correct_index:0,
+            explanation:"An explicit answer supported by the supplied lecture text.",
+            source_quote:"",source_page:0,source_verified:false,
+          })),
+        }),{status:200,headers:{"Content-Type":"application/json"}});
+      }
+      return new Response("{}",{status:200});
+    });
+    const user=userEvent.setup();
+    render(<QuizStudio/>);
+    await user.upload(screen.getByLabelText("ملف المحاضرة"),
+      new File([lecture],"topics.pdf",{type:"application/pdf"}));
+    await user.click(screen.getByRole("button",{name:"استخراج المحاضرة"}));
+    await screen.findByText(/تم استخراج النص/);
+    await user.selectOptions(screen.getByLabelText("عدد أسئلة الاختبار"),"25");
+    await user.click(screen.getByRole("button",{name:"إنشاء الاختبار وبدء الأسئلة"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent("503");
+    failing=false;
+    await user.click(screen.getByRole("button",{name:"إنشاء الاختبار وبدء الأسئلة"}));
+    expect(await screen.findByText("السؤال 1 من 25")).toBeVisible();
+    expect(starts).toEqual([10,10,5,5]);
+  });
   it("returns to saved question banks without storing the lecture source",async()=>{
     const user=await generate();
     const saved=localStorage.getItem("maghrabi-office-quiz-banks-v1")||"";

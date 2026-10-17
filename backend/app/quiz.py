@@ -10,6 +10,7 @@ from io import BytesIO
 import json
 import logging
 import re
+import time
 import unicodedata
 from zipfile import ZipFile, BadZipFile
 
@@ -192,6 +193,35 @@ SYSTEM = (
 )
 
 
+def _gemini_post_with_retry(
+    client: httpx.Client, url: str, headers: dict, payload: dict
+) -> httpx.Response:
+    """Retry only transient provider failures; never repeat quota/billing errors.
+
+    A 503 UNAVAILABLE from Gemini means the request reached the provider but
+    the service is temporarily busy. Keep retries bounded to avoid a runaway
+    use of the free tier. Do not log uploaded lecture text or API credentials.
+    """
+    delays = (1.5, 3.0)
+    for attempt in range(len(delays) + 1):
+        response = client.post(url, headers=headers, json=payload)
+        if response.status_code not in (502, 503, 504) or attempt >= len(delays):
+            return response
+        delay = delays[attempt]
+        retry_after = response.headers.get("Retry-After", "").strip()
+        try:
+            if retry_after:
+                delay = min(6.0, max(0.0, float(retry_after)))
+        except ValueError:
+            pass
+        logger.warning(
+            "Gemini quiz transient HTTP %d; retry %d of %d",
+            response.status_code, attempt + 1, len(delays),
+        )
+        time.sleep(delay)
+    raise AssertionError("unreachable")
+
+
 def _provider_quiz(client: httpx.Client, payload: dict) -> str:
     provider = ai._provider()
     if provider is None:
@@ -226,9 +256,9 @@ def _provider_quiz(client: httpx.Client, payload: dict) -> str:
         return {"systemInstruction": {"parts": [{"text": SYSTEM}]},
                 "contents": [{"role": "user", "parts": [{"text": json.dumps(payload, ensure_ascii=False)}]}],
                 "generationConfig": config}
-    resp = client.post(url, headers=headers, json=body(False))
+    resp = _gemini_post_with_retry(client, url, headers, body(False))
     if ai._gemini_legacy_format_needed(resp):
-        resp = client.post(url, headers=headers, json=body(True))
+        resp = _gemini_post_with_retry(client, url, headers, body(True))
     ai._raise_provider_error(resp, provider)
     candidate = resp.json()["candidates"][0]
     if candidate.get("finishReason") not in (None, "STOP"):
