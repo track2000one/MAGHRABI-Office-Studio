@@ -2193,3 +2193,33 @@ textarea::placeholder {
 .ready-exam-quick-actions .button {width:auto;}
 .ready-review-toggle {width:max-content;max-width:100%;}
 @media(max-width:610px){.ready-exam-quick-actions,.ready-exam-quick-actions .button,.ready-review-toggle {width:100%;}}
+
+
+/* Searchable project-grade quiz library, backup transfer and attempt audit */
+.quiz-library-toolbar {display:flex;align-items:end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:15px 0 20px;}
+.quiz-library-toolbar > label {flex:1;min-width:200px;max-width:450px;display:grid;gap:7px;margin:0;font-size:13px;font-weight:600;}
+.quiz-library-toolbar input[type=search] {width:100%;border:1px solid #d8e5eb;padding:11px 13px;border-radius:9px;min-width:0;}
+.quiz-library-backup-actions {display:flex;gap:9px;flex-wrap:wrap;align-items:center;}
+.quiz-library-backup-actions .button {width:auto;min-height:38px;}
+.quiz-backup-upload {display:inline-flex!important;align-items:center!important;justify-content:center;position:relative;gap:0!important;margin:0!important;cursor:pointer;font-weight:600;overflow:hidden;}
+.quiz-backup-upload input[type=file] {position:absolute;width:1px;height:1px;opacity:0;top:0;left:0;}
+.quiz-saved-card > strong {font-size:16px;line-height:1.55;}
+.quiz-saved-card > small {overflow-wrap:anywhere;}
+.quiz-saved-actions .button {padding:8px 11px;min-height:36px;}
+.quiz-attempt-history {border-top:1px solid #dce7ec;padding-top:11px;}
+.quiz-attempt-history summary {cursor:pointer;font-size:13px;font-weight:700;color:#1a6274;}
+.quiz-attempt-list {display:grid;gap:5px;margin-top:9px;max-height:230px;overflow-y:auto;}
+.quiz-attempt-list p {display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;background:#f5fafb;border-radius:7px;margin:0;font-size:12px;}
+.quiz-attempt-list p strong {color:#0b8b87;margin-inline-start:auto;}
+.quiz-attempt-list p small {font-size:11px;color:#627b87;}
+.quiz-rename {display:flex;align-items:end;flex-wrap:wrap;gap:8px;border-top:1px solid #e5edf1;padding-top:12px;}
+.quiz-rename label {flex:1;display:grid;gap:5px;margin:0;min-width:200px;}
+.quiz-rename input {width:100%;padding:9px;border:1px solid #bfcfdb;border-radius:7px;}
+.quiz-rename .button {width:auto;}
+@media(max-width:600px){
+  .quiz-library-toolbar > label {max-width:none;width:100%;}
+  .quiz-library-backup-actions {width:100%;}
+  .quiz-library-backup-actions .button {flex:1;}
+  .quiz-saved-grid {grid-template-columns:1fr;}
+  .quiz-saved-actions .button {width:100%;}
+}
