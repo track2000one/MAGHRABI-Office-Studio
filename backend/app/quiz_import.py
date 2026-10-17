@@ -28,8 +28,8 @@ LETTER_INDEX = {
 }
 ARABIC_NUMBERS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 QUESTION = re.compile(
-    r"^\\s*(?:(?:Q(?:uestion)?|السؤال|سؤال|س)\\s*[#:]?\\s*)?"
-    r"([0-9٠-٩۰-۹]{1,3})\\s*[\\).:\\-–،]\\s*(.+?)\\s*$", re.I)
+    r"^\s*(?:(?:Q(?:uestion)?|السؤال|سؤال|س)\s*[#:]?\s*)?"
+    r"([0-9٠-٩۰-۹]{1,3})\s*[\).:\-–،]\s*(.+?)\s*$", re.I)
 OPTION = re.compile(
     r"^\s*(?:([A-Da-dأاإآبجد])\s*[\).:\-–،]"
     r"|\(([A-Da-dأاإآبجد])\))\s*(.+?)\s*$")
@@ -132,10 +132,10 @@ def _lines(raw: bytes, filename: str) -> tuple[list[tuple[int,str]],int]:
 def _clean_pasted_line(text: str) -> str:
     """Remove common Markdown wrappers without rewriting question content."""
     text = text.strip()
-    text = re.sub(r"^\\s*(?:>\\s*|[-*•]\\s+|#{1,6}\\s+)", "", text)
+    text = re.sub(r"^\s*(?:>\s*|[-*•]\s+|#{1,6}\s+)", "", text)
     # ChatGPT often uses **1. Question**, **A)** and **Answer: B**.
-    text = re.sub(r"\\*\\*|__", "", text)
-    text = re.sub(r"\\s+", " ", text).strip()
+    text = re.sub(r"\*\*|__", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
@@ -147,7 +147,7 @@ def parse_text_questions(text: str, title: str) -> ImportedQuestions:
         raise HTTPException(413, "عدد أحرف الأسئلة المنسوخة يتجاوز 100 ألف حرف.")
     heading = title.strip()[:160] or "اختبار منسوخ من ChatGPT"
     cleaned = [_clean_pasted_line(line) for line in text.splitlines()]
-    lines = [(1, line) for line in cleaned if line and line not in ("\\x60\\x60\\x60", "---")]
+    lines = [(1, line) for line in cleaned if line and line not in ("```", "---")]
     if not lines:
         raise HTTPException(422, "لم يُعثر على أسئلة نصية في المحتوى المنسوخ.")
     return _parse_lines(lines, 1, heading, filename=heading + ".txt")
