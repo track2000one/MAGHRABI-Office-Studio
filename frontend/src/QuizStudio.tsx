@@ -186,7 +186,7 @@ export default function QuizStudio() {
       questions: data.questions.map(q=>({
         question: q.question.trim(), options: q.options.map(option=>option.trim()),
         correct_index: q.correct_index as number,
-        explanation: "الإجابة الصحيحة محددة من مفتاح الإجابات أو تمت مراجعتها يدويًا.",
+        explanation: "هذه الإجابة معتمدة من مفتاح الإجابات في الملف أو من مراجعة مُعدّ الاختبار؛ يُنصح بمراجعة المادة التعليمية لفهم السبب.",
         source_quote: "",
         source_page: q.source_page,
       })),
@@ -355,6 +355,10 @@ export default function QuizStudio() {
       <p>إجابات صحيحة: <b>{lastResult.correct} من {lastResult.total}</b> ·
         الدرجة: <b>{lastResult.points} من 100</b> ·
         أسئلة تحتاج إلى إتقان: <b>{active.reviewIds.length}</b></p>
+      {round>0 && active.firstScore!==null && <p className="soft-note">
+        درجتك الأصلية في الاختبار الأول: <strong>{active.firstScore} من 100</strong>.
+        هذه الجولة للتدريب وتثبيت الأخطاء، ولا تغيّر درجة الاختبار الأول.
+      </p>}
       <div className="quiz-mastery-bar"><div style={{width:totalQuestions?mastered/totalQuestions*100+"%":"0%"}}/></div>
       <p className="muted small">إتقان {mastered} من {totalQuestions} سؤالًا. يُشترط جوابان صحيحان متتاليان للأسئلة التي أخطأت فيها أول مرة.</p>
       {wrong.length>0 && <>
@@ -373,7 +377,10 @@ export default function QuizStudio() {
         </div>
       </>}
       {!active.reviewIds.length ? <div className="quiz-completed"><strong>اكتمل إتقان أسئلة هذا الاختبار</strong><p>يمكنك بدء اختبار جديد لتثبيت معلومات أخرى من المحاضرة.</p></div>
-      : <button className="button primary" onClick={retry}>إعادة اختبار الأسئلة التي تحتاج إلى إتقان ({active.reviewIds.length})</button>}
+      : <>
+        <p className="muted small">ستظهر لك الأسئلة التي أخطأت فيها فقط. تكرار الإجابة الصحيحة مرتين متتاليتين ينهي مراجعة السؤال.</p>
+        <button className="button primary" onClick={retry}>إعادة اختبار الأسئلة التي تحتاج إلى إتقان ({active.reviewIds.length})</button>
+      </>}
       <button className="button outline" onClick={newQuiz}>العودة لإنشاء اختبار جديد</button>
     </section>}
     <section className="panel quiz-saved">
