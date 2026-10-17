@@ -10,6 +10,7 @@ type Question = {
   explanation: string;
   source_quote: string;
   source_page: number;
+  source_verified?: boolean;
 };
 type Bank = {title: string; questions: Question[]};
 type SavedQuiz = {
@@ -77,6 +78,8 @@ export default function QuizStudio() {
   const activeQuestionId = indices[at];
   const question = active && activeQuestionId !== undefined ? active.bank.questions[activeQuestionId] : null;
   const totalQuestions = active?.bank.questions.length || 0;
+  const noVerifiedQuote = active?.origin!=="imported"
+    ? active?.bank.questions.filter(q=>q.source_verified===false).length || 0 : 0;
   const mastered = useMemo(() => active ? totalQuestions - active.reviewIds.filter(id=>
     (active.streaks[id] || 0) < 2).length : 0, [active,totalQuestions]);
 
@@ -324,6 +327,11 @@ export default function QuizStudio() {
     </div>}
     </>}
     {stage === "exam" && active && question && <section className="panel quiz-exam">
+      {noVerifiedQuote>0 && round===0 && <p className="soft-note" role="status">
+        تم إعداد الاختبار بنجاح. تعذر مطابقة الاقتباس حرفيًا في {noVerifiedQuote} من
+        {totalQuestions} سؤالًا؛ لذلك لن تُعرض لهذه الأسئلة صفحات أو اقتباسات غير مؤكدة.
+        راجع صحة الإجابات مع المحاضرة عند استخدامها للمذاكرة.
+      </p>}
       <div className="quiz-topline"><span>{round===0?"الاختبار الأساسي":"جولة إتقان الأخطاء"}</span><strong>السؤال {at+1} من {indices.length}</strong></div>
       <div className="quiz-progress"><div style={{width:((at+1)/indices.length)*100+"%"}}/></div>
       <div className="quiz-exam-head"><span className="quiz-question-number">س{at+1}</span><h3 dir="auto">{question.question}</h3></div>
@@ -361,6 +369,10 @@ export default function QuizStudio() {
       </p>}
       <div className="quiz-mastery-bar"><div style={{width:totalQuestions?mastered/totalQuestions*100+"%":"0%"}}/></div>
       <p className="muted small">إتقان {mastered} من {totalQuestions} سؤالًا. يُشترط جوابان صحيحان متتاليان للأسئلة التي أخطأت فيها أول مرة.</p>
+      {noVerifiedQuote>0 && <p className="soft-note" role="status">
+        {noVerifiedQuote} سؤالًا لا يتوفر لها اقتباس مطابق ومتحقق من المحاضرة.
+        قد تكون الإجابة صحيحة، لكن يُنصح بمراجعة المحتوى الأصلي قبل الاعتماد عليها.
+      </p>}
       {wrong.length>0 && <>
         <h3>الأسئلة التي تحتاج إلى مراجعة في هذه الجولة</h3>
         <div className="quiz-review-list">
@@ -371,7 +383,11 @@ export default function QuizStudio() {
               <p><b>الإجابة الصحيحة:</b> {q.options[q.correct_index]}</p>
               <p><b>التفسير:</b> {q.explanation}</p>
               {q.source_quote && <blockquote>{q.source_quote}</blockquote>}
-              <small className="muted">المصدر: {active.filename} · {active.origin==="imported" ? (active.filename.toLowerCase().endsWith(".pdf")?"صفحة "+q.source_page:"مستند Word") : (q.source_page===1?"المقطع المرجعي 1 / الصفحة 1":"صفحة "+q.source_page)}</small>
+              <small className="muted">{active.origin==="imported"
+                ? "المصدر: "+active.filename+" · "+(active.filename.toLowerCase().endsWith(".pdf")?"صفحة "+q.source_page:"مستند Word")
+                : q.source_verified===false
+                  ? "لا يوجد اقتباس موثق لهذا السؤال؛ راجع المحاضرة للتحقق من صحة الإجابة."
+                  : "المصدر: "+active.filename+" · "+(q.source_page===1?"المقطع المرجعي 1 / الصفحة 1":"صفحة "+q.source_page)}</small>
             </article>;
           })}
         </div>

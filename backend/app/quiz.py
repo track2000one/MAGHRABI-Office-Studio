@@ -1,7 +1,8 @@
 """Lecture-grounded AI multiple-choice quiz generation.
 
-The extracted source is not written to disk, and all generated evidence must
-appear verbatim in the uploaded lecture. This is a study aid, not proctoring.
+The extracted source is not written to disk. Valid questions are usable even
+when a proposed citation cannot be text-matched; unmatched citations are removed
+and disclosed, never shown as verified. This is a study aid, not proctoring.
 """
 from __future__ import annotations
 
@@ -44,8 +45,9 @@ class QuizQuestion(BaseModel):
     options: list[str] = Field(min_length=4, max_length=4)
     correct_index: int = Field(ge=0, le=3)
     explanation: str = Field(min_length=12, max_length=700)
-    source_quote: str = Field(min_length=10, max_length=320)
-    source_page: int = Field(default=1, ge=1, le=80)
+    source_quote: str = Field(default="", max_length=320)
+    source_page: int = Field(default=0, ge=0, le=80)
+    source_verified: bool = False  # Set only by server-side source matching.
 
     @model_validator(mode="after")
     def unique_options(self):
@@ -181,10 +183,10 @@ SYSTEM = (
     "Avoid trick questions, 'all of the above', "
     "'none of the above', repeated or empty options. Spread correct_index across 0-3. "
     "For easy: definitions/facts. For medium: comparisons/application. For hard: reasoning based on lecture evidence. "
-    "For mixed: balanced levels. Include an informative explanation of the correct answer and copy one short "
-    "source_quote as a short contiguous excerpt copied word-for-word from the supplied [PAGE N] text. "
-    "Never translate, paraphrase, summarize, or invent source_quote. PDF text may have unusual spaces, "
-    "punctuation or ligatures; copy the words as they appear. "
+    "For mixed: balanced levels. Include an informative explanation of the correct answer. "
+    "For source_quote, copy a SHORT contiguous excerpt from the source [PAGE N] text when available; "
+    "if you cannot confidently quote it verbatim, return an EMPTY string, not a paraphrase. "
+    "Never fabricate source quotes. The quiz must still be complete if exact quotations are unavailable. "
     "Set source_page based on the [PAGE N] label in the uploaded source; DOCX is labeled PAGE 1 but this "
     "does NOT mean a printed Word page. Use the requested output language and no markdown/code fences."
 )
@@ -295,10 +297,18 @@ def _validate_quiz(raw: str, count: int, pages: dict[int, str], avoid_questions:
         if key in seen:
             raise HTTPException(502, "احتوى الاختبار على سؤال مكرر أو مذكور في دفعة سابقة.")
         seen.add(key)
+        # Valid MCQs may be built from lecture context even if the provider
+        # paraphrases a quote, especially for complex PDFs. Never publish a
+        # fabricated citation or page number; report lack of text verification
+        # on the question instead of discarding the entire student exam.
         evidence = _find_evidence(question.source_quote, pages)
         if evidence is None:
-            raise HTTPException(502, "لم يُثبت أحد الأسئلة بنص المحاضرة.")
-        question.source_page, question.source_quote = evidence
+            question.source_page = 0
+            question.source_quote = ""
+            question.source_verified = False
+        else:
+            question.source_page, question.source_quote = evidence
+            question.source_verified = True
     return result
 
 
@@ -320,9 +330,8 @@ def create_quiz(request: QuizRequest) -> QuizSet:
             "previous_questions": request.avoid_questions,
         }
         with httpx.Client(timeout=httpx.Timeout(100, connect=10)) as client:
-            # A provider may accidentally paraphrase a citation. Retry once
-            # automatically with precise grounding feedback; never publish an
-            # unsupported answer or disclose source material in log messages.
+            # Only retry an invalid schema or duplicate/missing questions.
+            # A non-verifiable quote is stripped, not a reason to fail a quiz.
             for attempt in range(2):
                 raw = _provider_quiz(client, payload)
                 try:
@@ -333,21 +342,18 @@ def create_quiz(request: QuizRequest) -> QuizSet:
                     if attempt == 1:
                         raise HTTPException(
                             502,
-                            "تعذر إنشاء أسئلة موثقة بالكامل من نص المحاضرة بعد إعادة المحاولة تلقائيًا. "
-                            "جرّب 5 أسئلة، أو ارفع نسخة PDF نصية أو قسّم المحاضرة إلى أجزاء.",
+                            "لم يتمكن مزود الذكاء الاصطناعي من إنشاء العدد المطلوب من الأسئلة "
+                            "بأربعة خيارات صالحة بعد إعادة المحاولة. جرّب عددًا أقل أو قسم المحاضرة.",
                         ) from exc
-                    logger.info("AI lecture quiz evidence check failed; retrying generation once")
+                    logger.info("AI lecture quiz structure or duplicate check failed; retrying once")
                     payload = {
                         **payload,
                         "validation_feedback": (
-                            "The previous generated quiz FAILED source verification. "
-                            "Generate a NEW complete set of exactly the requested count. "
-                            "Avoid all previous_questions and repeated facts. "
-                            "For EVERY question, source_quote MUST contain a contiguous "
-                            "verbatim excerpt copied from lecture_text [PAGE N]. "
-                            "Do not translate or paraphrase the source_quote. "
-                            "Copy a short, distinctive phrase of at least 10 characters "
-                            "from the lecture itself. Do not use external knowledge."
+                            "The previous generated quiz had an invalid structure or repeated questions. "
+                            "Regenerate exactly the requested number of DISTINCT questions and FOUR "
+                            "different choices per question. Avoid all previous_questions and repeated facts. "
+                            "Supply correct_index and explanation. Cite a verbatim source_quote only "
+                            "if it is available; otherwise leave the quote empty. Do not use external knowledge."
                         ),
                     }
     except HTTPException:
