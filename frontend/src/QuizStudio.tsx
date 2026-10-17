@@ -164,8 +164,9 @@ export default function QuizStudio() {
         .toLocaleLowerCase().replace(/[\u0300-\u036f\u064b-\u065f]/g,"")
         .replace(/[^\p{L}\p{N}]+/gu," ").trim();
       const known = new Set(collected.map(q=>fingerprint(q.question)));
-      for (const size of sizes) {
+      for (const plannedSize of sizes) {
         if (collected.length >= count) break;
+        const size = count>20 ? Math.min(BATCH_SIZE,count-collected.length) : plannedSize;
         // Allow resuming only already completed batches of this configuration.
         // The final partial batch is never saved until all its questions pass.
         if (collected.length % BATCH_SIZE !== 0 && collected.length < count)
