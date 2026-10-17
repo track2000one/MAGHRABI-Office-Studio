@@ -28,6 +28,7 @@ export default function ReadyQuizImport({onAccept}: Props) {
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const [notice,setNotice]=useState("");
+  const [reviewOpen,setReviewOpen]=useState(false);
   const missing=draft?.questions.filter(q=>q.correct_index===null).length || 0;
 
   async function parse() {
@@ -43,7 +44,11 @@ export default function ReadyQuizImport({onAccept}: Props) {
       body.append("file",file);
       const parsed:ReadyImport=await (await api("/quiz/import",{method:"POST",body})).json();
       setDraft(parsed);
-      setNotice("تم ترتيب "+parsed.questions.length+" سؤالًا. راجع الأسئلة وخياراتها، ثم احفظ الاختبار.");
+      const missingKeys=parsed.questions.filter(q=>q.correct_index===null).length;
+      setReviewOpen(missingKeys>0 || parsed.skipped>0);
+      setNotice(missingKeys
+        ? "تم استخراج الأسئلة. يلزم تحديد "+missingKeys+" إجابة صحيحة قبل اعتماد الاختبار."
+        : "تم تجهيز اختبار الطالب من "+parsed.questions.length+" سؤالًا، ويمكن حفظه أو بدء الحل مباشرة.");
     } catch(e) {
       setError(e instanceof Error?e.message:"تعذر تحليل ملف الأسئلة.");
     } finally {setBusy(false);}
@@ -66,6 +71,9 @@ export default function ReadyQuizImport({onAccept}: Props) {
   }
   function accept(start:boolean) {
     if (!draft) return;
+    if (draft.questions.length===0 || draft.questions.length>40) {
+      setError("اختر من 1 إلى 40 سؤالًا لإعداد الاختبار.");return;
+    }
     if (missing) {setError("حدد الإجابة الصحيحة في "+missing+" سؤالًا قبل حفظ اختبار بدرجات.");return;}
     for (const [i,q] of draft.questions.entries()) {
       if (!q.question.trim() || !Array.isArray(q.options) ||
@@ -85,12 +93,12 @@ export default function ReadyQuizImport({onAccept}: Props) {
     <p className="muted small">ارفع ملفًا يحتوي على أسئلة متعددة الخيارات جاهزة، وسنرتبها دون توليد أو تغيير محتواها بالذكاء الاصطناعي. حتى 40 سؤالًا لكل اختبار.</p>
     <label className="ready-import-upload">ملف الأسئلة
       <input aria-label="ملف أسئلة جاهزة" type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        onChange={e=>{setFile(e.target.files?.[0]||null);setDraft(null);setError("");setNotice("");}} />
+        onChange={e=>{setFile(e.target.files?.[0]||null);setDraft(null);setReviewOpen(false);setError("");setNotice("");}} />
     </label>
     <button type="button" className="button primary" disabled={!file||busy} onClick={()=>void parse()}>
       {busy?"جارٍ استخراج وترتيب الأسئلة…":"استخراج وترتيب الأسئلة"}
     </button>
-    <p className="muted small">صيغة مناسبة: رقم السؤال، ثم أربعة خيارات A–D أو أ–د. يمكن إرفاق مفتاح الإجابات داخل الأسئلة أو في نهايتها. يُراجع المستخدم النتيجة قبل اعتمادها.</p>
+    <p className="muted small">صيغة مناسبة: رقم السؤال، ثم أربعة خيارات A–D أو أ–د. يمكن إرفاق مفتاح الإجابات داخل الأسئلة أو في نهايتها. في حال اكتمال مفاتيح الإجابة، سيصبح الاختبار جاهزًا للحل فور الاستخراج.</p>
     {error && <p className="banner error" role="alert">{error}</p>}
     {notice && <p className="soft-note" role="status">{notice}</p>}
     {draft && <>
@@ -110,7 +118,29 @@ export default function ReadyQuizImport({onAccept}: Props) {
       {draft.warnings.length>0 && <div className="ready-import-warnings" role="status">
         {draft.warnings.map((message,i)=><p key={i}>{message}</p>)}
       </div>}
-      <div className="ready-import-items">
+      <div className={"ready-exam-status"+(missing===0?" is-ready":" needs-answers")} role="status">
+        <div>
+          <strong>{missing===0?"الاختبار جاهز للطالب":"الاختبار يحتاج اعتماد الإجابات"}</strong>
+          <p>{missing===0
+            ? "تم ترتيب الأسئلة وتحديد إجاباتها الصحيحة. يستطيع الطالب الآن أداء الاختبار دون رؤية مفتاح الإجابات."
+            : "حدد الإجابات الصحيحة الناقصة من شاشة المراجعة؛ لن نمنح درجات بناءً على تخمين."}</p>
+          <p className="muted small">
+            {draft.questions.length} سؤالًا · الدرجة الكلية 100 ·
+            {(100/draft.questions.length).toFixed(2)} درجة لكل سؤال قبل التقريب النهائي
+          </p>
+        </div>
+        {missing===0 && <div className="ready-exam-quick-actions">
+          <button type="button" className="button primary"
+            onClick={()=>accept(true)}>ابدأ اختبار الطالب الآن</button>
+          <button type="button" className="button outline"
+            onClick={()=>accept(false)}>حفظ الاختبار للطالب لاحقًا</button>
+        </div>}
+      </div>
+      <button type="button" className="button outline ready-review-toggle"
+        aria-expanded={reviewOpen} onClick={()=>setReviewOpen(open=>!open)}>
+        {reviewOpen?"إخفاء مراجعة الأسئلة ومفتاح الإجابات":"مراجعة أو تعديل الأسئلة ومفتاح الإجابات"}
+      </button>
+      {reviewOpen && <div className="ready-import-items">
         {draft.questions.map((q,i)=><article className="ready-import-question" key={q.number+"-"+i}>
           <div className="ready-import-question-head">
             <strong>السؤال {i+1}</strong>
@@ -150,13 +180,11 @@ export default function ReadyQuizImport({onAccept}: Props) {
           <p className="small muted">{q.correct_index===null?"يجب تحديد الإجابة قبل التصحيح.":"الإجابة محددة، راجع صحتها."}
             {" · "}{draft.filename.toLowerCase().endsWith(".pdf")?"صفحة "+q.source_page:"من مستند Word"}</p>
         </article>)}
-      </div>
+      </div>}
       <div className="ready-import-footer">
-        <p className="muted small">قبل الاعتماد: راجع الأرقام والنصوص والمفاتيح، خصوصًا في الملفات متعددة الأعمدة أو المصورة. لن تُفترض إجابة صحيحة إذا لم تتوفر في الملف.</p>
-        <button type="button" className="button outline" disabled={missing>0||!draft.questions.length||!draft.title.trim()}
-          onClick={()=>accept(false)}>حفظ الاختبار في اختباراتي</button>
-        <button type="button" className="button primary" disabled={missing>0||!draft.questions.length||!draft.title.trim()}
-          onClick={()=>accept(true)}>حفظ وبدء حل الاختبار</button>
+        <p className="muted small">يمكن للطالب البدء بعد اكتمال الإجابات الصحيحة. عند إنهاء الجولة تظهر النتيجة من 100، ويمكن إعادة الأسئلة الخاطئة حتى الإجابة عنها مرتين متتاليتين. لاحظ أن مفتاح الإجابات يظهر في وضع المراجعة، لذا أخفه قبل تسليم الجهاز للطالب.</p>
+        {missing>0 && <button type="button" className="button outline"
+          onClick={()=>setReviewOpen(true)}>الانتقال إلى اعتماد الإجابات الناقصة ({missing})</button>}
       </div>
     </>}
   </section>;
