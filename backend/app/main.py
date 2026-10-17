@@ -16,7 +16,7 @@ from fastapi.responses import Response, FileResponse
 from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from .content import Content, GenerateRequest, ReviseRequest
-from . import ai, ai_session, quiz
+from . import ai, ai_session, quiz, quiz_import
 from .exports import export_docx, export_pptx, format_docx
 from .word_preview import render_word_preview
 from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, open_pdf, pt_to_mm, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
@@ -307,6 +307,19 @@ def generate_content(request: GenerateRequest, http_request: Request, authorizat
 def revise_content(request: ReviseRequest, http_request: Request, authorization: str | None = Header(default=None)):
     _require_ai_access(http_request, authorization)
     return ai.revise(request)
+
+
+@app.post("/api/v1/quiz/import", response_model=quiz_import.ImportedQuestions)
+async def import_ready_quiz(file: UploadFile = File(...)):
+    # Parsing already-written MCQs requires no AI account or provider API call.
+    # The upload is handled in memory and never stored on the server.
+    payload = await file.read(quiz_import.MAX_UPLOAD + 1)
+    try:
+        return await run_in_threadpool(
+            quiz_import.parse_questions, payload, file.filename or "questions.pdf"
+        )
+    finally:
+        await file.close()
 
 
 @app.post("/api/v1/ai/quiz/extract", response_model=quiz.LectureExtract)
