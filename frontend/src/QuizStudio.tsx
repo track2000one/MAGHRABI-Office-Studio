@@ -3,57 +3,21 @@ import {api, jsonBody} from "./api";
 import ReadyQuizImport from "./ReadyQuizImport";
 import type {ReadyImport} from "./ReadyQuizImport";
 
-type Question = {
-  question: string;
-  options: string[];
-  correct_index: number;
-  explanation: string;
-  source_quote: string;
-  source_page: number;
-  source_verified?: boolean;
-};
-type Bank = {title: string; questions: Question[]};
-type SavedQuiz = {
-  id: string;
-  title: string;
-  filename: string;
-  createdAt: string;
-  updatedAt: string;
-  difficulty: string;
-  bank: Bank;
-  firstScore: number | null;
-  reviewIds: number[];
-  streaks: Record<number, number>;
-  reviewRounds: number;
-  origin?: "generated" | "imported";
-};
+import {MAX_QUIZ_PROJECTS,readQuizProjects,persistQuizProjects,
+  exportQuizBackup,parseQuizBackup,mergeQuizBackups,MAX_BACKUP_SIZE} from "./quizLibrary";
+import type {QuizProject as SavedQuiz,QuizQuestion as Question} from "./quizLibrary";
+
+type Bank = {title:string;questions:Question[]};
 type Extracted = {filename: string; source_text: string; pages: number; truncated: boolean; characters: number};
 type Stage = "setup" | "exam" | "results";
-const KEY = "maghrabi-office-quiz-banks-v1";
-const MAX_BANKS = 12;
-const MAX_EXAM_QUESTIONS = 40;
-const BATCH_SIZE = 10;
-const levels: Record<string,string> = {easy:"سهل",medium:"متوسط",hard:"صعب",mixed:"متنوع"};
-function readSaved(): SavedQuiz[] {
-  try {
-    const value: unknown = JSON.parse(localStorage.getItem(KEY) || "[]");
-    if (!Array.isArray(value)) return [];
-    return value.filter((item): item is SavedQuiz => {
-      if (!item || typeof item !== "object") return false;
-      const v = item as Partial<SavedQuiz>;
-      return typeof v.id === "string" && typeof v.title === "string" &&
-        Array.isArray(v.bank?.questions) && v.bank.questions.length >= 1 &&
-        v.bank.questions.length <= MAX_EXAM_QUESTIONS && Array.isArray(v.reviewIds) &&
-        typeof v.streaks === "object" && v.streaks !== null;
-    }).slice(0,MAX_BANKS);
-  } catch { return []; }
-}
+const BATCH_SIZE=10;
+const levels: Record<string,string>={easy:"سهل",medium:"متوسط",hard:"صعب",mixed:"متنوع"};
 function roundPosition(question: Question, displayIndex: number, round: number) {
   return (displayIndex + round) % question.options.length;
 }
 
 export default function QuizStudio() {
-  const [saved,setSaved] = useState<SavedQuiz[]>(readSaved);
+  const [saved,setSaved] = useState<SavedQuiz[]>(readQuizProjects);
   const [active,setActive] = useState<SavedQuiz | null>(null);
   const [upload,setUpload] = useState<File | null>(null);
   const [lecture,setLecture] = useState<Extracted | null>(null);
@@ -72,6 +36,10 @@ export default function QuizStudio() {
   const [error,setError] = useState("");
   const [note,setNote] = useState("");
   const [deleteId,setDeleteId] = useState("");
+  const [libraryQuery,setLibraryQuery] = useState("");
+  const [renameId,setRenameId] = useState("");
+  const [renameTitle,setRenameTitle] = useState("");
+  const [backupBusy,setBackupBusy] = useState(false);
   // Preserve completed batches in the current tab if a later provider request fails.
   // Source text is never persisted as part of the saved question bank.
   const partialRef = useRef<{key:string;title:string;questions:Question[]} | null>(null);
@@ -80,21 +48,67 @@ export default function QuizStudio() {
   const totalQuestions = active?.bank.questions.length || 0;
   const noVerifiedQuote = active?.origin!=="imported"
     ? active?.bank.questions.filter(q=>q.source_verified===false).length || 0 : 0;
+  const visibleProjects = useMemo(()=>saved
+    .filter(item => (item.title+" "+item.filename).toLocaleLowerCase()
+      .includes(libraryQuery.trim().toLocaleLowerCase()))
+    .sort((a,b)=>Date.parse(b.updatedAt)-Date.parse(a.updatedAt)),[saved,libraryQuery]);
   const mastered = useMemo(() => active ? totalQuestions - active.reviewIds.filter(id=>
     (active.streaks[id] || 0) < 2).length : 0, [active,totalQuestions]);
 
-  function store(item: SavedQuiz) {
+  function store(item: SavedQuiz):boolean {
     try {
-      const current = readSaved();
-      const next = [item, ...current.filter(q=>q.id !== item.id)].slice(0,MAX_BANKS);
-      localStorage.setItem(KEY,JSON.stringify(next));
+      const current=readQuizProjects();
+      const next=[item,...current.filter(q=>q.id!==item.id)];
+      persistQuizProjects(next);
       setSaved(next);
       setActive(item);
-      setNote("تم حفظ الاختبار وتقدم المراجعة على هذا المتصفح.");
-    } catch {
-      setError("تعذر حفظ الاختبار في هذا المتصفح. يمكنك متابعة الجلسة الحالية دون حفظ.");
-      setActive(item);
+      setNote("حُفظ مشروع الاختبار وأسئلته وتقدم المراجعة في هذه المكتبة.");
+      return true;
+    } catch(e) {
+      setError(e instanceof Error?e.message:"تعذّر حفظ مشروع الاختبار.");
+      return false;
     }
+  }
+  function renameProject(item:SavedQuiz) {
+    const title=renameTitle.trim();
+    if(!title||title.length>180){setError("أدخل اسمًا للمحاضرة لا يتجاوز 180 حرفًا.");return;}
+    try {
+      const renamed={...item,title,updatedAt:new Date().toISOString()};
+      const next=readQuizProjects().map(q=>q.id===item.id?renamed:q);
+      persistQuizProjects(next);
+      setSaved(next);
+      setActive(current=>current?.id===item.id?renamed:current);
+      setNote("تم تحديث اسم مشروع الاختبار.");
+      setRenameId("");setRenameTitle("");
+    }catch(e){setError(e instanceof Error?e.message:"تعذّر تغيير الاسم.");}
+  }
+  function downloadBackup() {
+    try {
+      const snapshot=exportQuizBackup(readQuizProjects());
+      const blob=new Blob([snapshot],{type:"application/json;charset=utf-8"});
+      const url=URL.createObjectURL(blob);
+      const anchor=document.createElement("a");
+      anchor.href=url;
+      anchor.download="MAGHRABI-Quiz-Projects-Backup.json";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setNote("تم تجهيز ملف النسخة الاحتياطية. احفظه في مكان آمن؛ يحتوي على الأسئلة والإجابات.");
+    }catch(e){setError(e instanceof Error?e.message:"تعذّر تصدير النسخة الاحتياطية.");}
+  }
+  async function uploadBackup(file:File|undefined) {
+    if(!file)return;
+    if(file.size>MAX_BACKUP_SIZE){setError("النسخة الاحتياطية تتجاوز 4 ميجابايت.");return;}
+    setBackupBusy(true);setError("");
+    try {
+      const incoming=parseQuizBackup(await file.text());
+      const next=mergeQuizBackups(readQuizProjects(),incoming);
+      persistQuizProjects(next);
+      setSaved(next);
+      setNote("تم استيراد المشاريع الجديدة دون استبدال أو حذف الاختبارات الموجودة. عدد الاختبارات: "+next.length+".");
+    }catch(e){setError(e instanceof Error?e.message:"تعذّر استيراد نسخة الاختبارات. لم تتغير مشاريعك.");}
+    finally {setBackupBusy(false);}
   }
   function startSet(item: SavedQuiz) {
     setActive(item);
@@ -166,13 +180,15 @@ export default function QuizStudio() {
       }
       if (collected.length !== count)
         throw new Error("لم تكتمل جميع أسئلة الاختبار. حاول مجددًا.");
-      const bank: Bank = {title,questions:collected};
+      // Use the lecture filename as the permanent project name, not a variable AI title.
+      const lectureName=lecture.filename.replace(/\.(pdf|docx)$/i,"").trim();
+      const bank: Bank = {title:lectureName || title || "اختبار محاضرة",questions:collected};
       const item:SavedQuiz = {
         id:crypto.randomUUID(), title:bank.title,filename:lecture.filename,
         createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
-        difficulty, bank, firstScore:null,reviewIds:[],streaks:{},reviewRounds:0,
+        difficulty, bank, firstScore:null,reviewIds:[],streaks:{},reviewRounds:0,attempts:[],
       };
-      store(item);
+      if(!store(item))return;
       partialRef.current=null;
       startSet(item);
     } catch(e) {
@@ -198,9 +214,9 @@ export default function QuizStudio() {
       id: crypto.randomUUID(),title:bank.title,filename:data.filename,
       createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
       difficulty:"imported",bank,firstScore:null,reviewIds:[],streaks:{},
-      reviewRounds:0,origin:"imported",
+      reviewRounds:0,origin:"imported",attempts:[],
     };
-    store(item);
+    if(!store(item))return;
     if(launch)startSet(item);
     else setNote("تم حفظ الأسئلة المستوردة في «اختباراتي المحفوظة». يمكنك حلها لاحقًا.");
   }
@@ -222,13 +238,16 @@ export default function QuizStudio() {
     }
     const item:SavedQuiz = {
       ...active, updatedAt:new Date().toISOString(),
-      firstScore:round===0?points:active.firstScore,
+      firstScore:round===0 && active.firstScore===null?points:active.firstScore,
       reviewIds,streaks:nextStreaks,
       reviewRounds:round===0?active.reviewRounds:active.reviewRounds+1,
+      attempts:[...(active.attempts||[]),{at:new Date().toISOString(),
+        score:points,correct,total:indices.length,
+        kind:round===0?"full" as const:"review" as const}],
     };
     setWrong(failed);
     setLastResult({correct,total:indices.length,points});
-    store(item);
+    if(!store(item))setActive(item);
     setStage("results");
   }
   function retry() {
@@ -244,10 +263,13 @@ export default function QuizStudio() {
     setNote("");
   }
   function deleteQuiz() {
-    const next=saved.filter(s=>s.id!==deleteId);
-    try {localStorage.setItem(KEY,JSON.stringify(next));setSaved(next);}
-    catch {setError("تعذر حذف الاختبار من التخزين المحلي.");}
-    if(active?.id===deleteId){setActive(null);setStage("setup");}
+    try {
+      const next=readQuizProjects().filter(q=>q.id!==deleteId);
+      persistQuizProjects(next);
+      setSaved(next);
+      if(active?.id===deleteId){setActive(null);setStage("setup");}
+      setNote("تم حذف مشروع الاختبار المحدد فقط.");
+    } catch(e){setError(e instanceof Error?e.message:"تعذّر حذف الاختبار.");}
     setDeleteId("");
   }
   function newQuiz(){
@@ -399,29 +421,91 @@ export default function QuizStudio() {
       </>}
       <button className="button outline" onClick={newQuiz}>العودة لإنشاء اختبار جديد</button>
     </section>}
-    <section className="panel quiz-saved">
-      <div className="quiz-section-title"><h3>اختباراتي المحفوظة</h3><span className="muted small">{saved.length} من {MAX_BANKS}</span></div>
-      {saved.length===0 ? <p className="muted">عند إنشاء أول اختبار ستجده هنا لتعود إليه لاحقًا.</p>
-        : <div className="quiz-saved-grid">{saved.map(item=><article className="quiz-saved-card" key={item.id}>
-          <strong>{item.title}</strong>
-          <small>{item.filename} · {item.bank.questions.length} سؤال · {item.origin==="imported"?"أسئلة مستوردة":levels[item.difficulty]||item.difficulty}</small>
-          <p className="muted small">{item.firstScore===null?"لم يُنهَ الاختبار بعد":"الدرجة الأولى "+item.firstScore+"%"} ·
-            {item.reviewIds.length?" "+item.reviewIds.length+" سؤال يحتاج مراجعة":" لا توجد أسئلة متبقية للمراجعة"}</p>
-          <div className="quiz-saved-actions">
-            <button className="button outline" onClick={()=>{
-              if(item.reviewIds.length && item.firstScore!==null){
-                setActive(item);setRound(Math.max(1,item.reviewRounds+1));setIndices(item.reviewIds);
-                setAt(0);setAnswers({});setStage("exam");setWrong([]);setNote("");
-              } else startSet(item);
-            }}>{item.reviewIds.length && item.firstScore!==null?"استكمال مراجعة الأخطاء":"بدء الاختبار"}</button>
-            <button className="text-button" onClick={()=>setDeleteId(item.id)}>حذف</button>
-          </div>
-          {deleteId===item.id&&<div className="quiz-delete"><p>حذف بنك الأسئلة ونتائجه من هذا المتصفح؟</p>
-            <button className="button outline" onClick={()=>setDeleteId("")}>إلغاء</button>
-            <button className="button danger" onClick={deleteQuiz}>تأكيد الحذف</button>
-          </div>}
-        </article>)}</div>}
-      <p className="muted small">تُحفظ بنوك الأسئلة ونتائجها محليًا على هذا المتصفح فقط؛ لا تُحفظ نسخة المحاضرة الأصلية. هذه اختبارات تدريبية وليست امتحانات مراقبة.</p>
+    <section className="panel quiz-saved" aria-label="مكتبة مشاريع الاختبارات">
+      <div className="quiz-section-title">
+        <div><h3>مكتبة اختباراتي</h3>
+          <p className="muted small">محاضراتك محفوظة بأسئلتها وإجاباتها، وجاهزة للاختبار مجددًا دون إعادة رفع الملف.</p>
+        </div>
+        <span className="muted small">{saved.length} من {MAX_QUIZ_PROJECTS} مشروعًا محفوظًا</span>
+      </div>
+      <div className="quiz-library-toolbar">
+        <label>البحث عن محاضرة أو مشروع اختبار
+          <input type="search" aria-label="البحث في مكتبة اختباراتي"
+            placeholder="اسم المحاضرة…" value={libraryQuery} onChange={e=>setLibraryQuery(e.target.value)}/>
+        </label>
+        <div className="quiz-library-backup-actions">
+          <button className="button outline" type="button" onClick={downloadBackup}>تصدير نسخة احتياطية</button>
+          <label className="button outline quiz-backup-upload">
+            {backupBusy?"جارٍ الاستيراد…":"استيراد نسخة احتياطية"}
+            <input aria-label="ملف نسخة اختباراتي الاحتياطية" type="file"
+              disabled={backupBusy} accept=".json,application/json"
+              onChange={e=>{const file=e.target.files?.[0];void uploadBackup(file);e.target.value="";}}/>
+          </label>
+        </div>
+      </div>
+      {saved.length===0
+        ? <p className="muted">أنشئ اختبارًا أو استورد أسئلة جاهزة ليظهر مشروع المحاضرة هنا، ثم يمكنك إعادة الاختبار في أي وقت.</p>
+        : visibleProjects.length===0
+          ? <p className="muted">لم نجد مشروع اختبار يطابق البحث. جرّب اسم محاضرة آخر.</p>
+          : <div className="quiz-saved-grid">{visibleProjects.map(item=>{
+            const total=item.attempts?.filter(attempt=>attempt.kind==="full").length || 0;
+            const latestFull=[...(item.attempts||[])].reverse().find(attempt=>attempt.kind==="full");
+            return <article className="quiz-saved-card" key={item.id}>
+              <strong dir="auto">{item.title}</strong>
+              <small dir="auto">{item.filename}</small>
+              <small>{item.bank.questions.length} سؤال · {item.origin==="imported"?"أسئلة مستوردة":levels[item.difficulty]||item.difficulty} ·
+                {" "}آخر تحديث {new Date(item.updatedAt).toLocaleDateString("ar-SA")}</small>
+              <p className="muted small">
+                {item.firstScore===null?"لم يُنهَ الاختبار بعد":"درجة أول محاولة "+item.firstScore+"%"} ·
+                {" "}{total} محاولة كاملة
+                {latestFull ? " · آخر درجة "+latestFull.score+"%" : ""}
+                {item.reviewIds.length ? " · "+item.reviewIds.length+" سؤال بحاجة للمراجعة" : ""}
+              </p>
+              <div className="quiz-saved-actions">
+                <button className="button outline" onClick={()=>startSet(item)}>
+                  {item.firstScore===null?"بدء الاختبار":"إعادة الاختبار كاملًا"}
+                </button>
+                {item.firstScore!==null && item.reviewIds.length>0 &&
+                  <button className="button outline" onClick={()=>{
+                    setActive(item);
+                    setRound(Math.max(1,item.reviewRounds+1));
+                    setIndices(item.reviewIds);
+                    setAt(0);setAnswers({});setStage("exam");
+                    setWrong([]);setError("");setNote("");
+                  }}>مراجعة الأسئلة الخاطئة ({item.reviewIds.length})</button>}
+                <button className="text-button" onClick={()=>{
+                  setRenameId(item.id);setRenameTitle(item.title);setDeleteId("");
+                }}>تغيير الاسم</button>
+                <button className="text-button" onClick={()=>{setDeleteId(item.id);setRenameId("");}}>حذف</button>
+              </div>
+              {item.attempts?.length>0 && <details className="quiz-attempt-history">
+                <summary>سجل الدرجات والمحاولات ({item.attempts.length})</summary>
+                <div className="quiz-attempt-list">{[...item.attempts].reverse().map((attempt,i)=>
+                  <p key={i}><span>{attempt.kind==="full"?"اختبار كامل":"مراجعة الأخطاء"}</span>
+                    <strong>{attempt.score} من 100</strong>
+                    <small>{attempt.correct}/{attempt.total} · {new Date(attempt.at).toLocaleString("ar-SA")}</small>
+                  </p>)}</div>
+              </details>}
+              {renameId===item.id && <div className="quiz-rename">
+                <label>اسم مشروع الاختبار
+                  <input aria-label={"الاسم الجديد للمحاضرة "+item.title}
+                    value={renameTitle} maxLength={180} onChange={e=>setRenameTitle(e.target.value)}/>
+                </label>
+                <button className="button primary" onClick={()=>renameProject(item)}>حفظ الاسم</button>
+                <button className="button outline" onClick={()=>setRenameId("")}>إلغاء</button>
+              </div>}
+              {deleteId===item.id && <div className="quiz-delete">
+                <p>حذف مشروع الاختبار وأسئلته وسجل محاولاته من هذا المتصفح؟</p>
+                <button className="button outline" onClick={()=>setDeleteId("")}>إلغاء</button>
+                <button className="button danger" onClick={deleteQuiz}>تأكيد الحذف</button>
+              </div>}
+            </article>;
+          })}</div>}
+      <p className="muted small">
+        تُحفظ المشاريع وأسئلتها ودرجاتها محليًا على هذا المتصفح، حتى 50 مشروعًا دون حذف تلقائي للأقدم.
+        استخدم «تصدير نسخة احتياطية» لحفظها أو نقلها إلى جهاز آخر. النسخة تحتوي مفاتيح الإجابات،
+        لذا احفظها في مكان آمن. لم تُفعّل المزامنة السحابية بين الأجهزة بعد.
+      </p>
     </section>
   </div>;
 }
