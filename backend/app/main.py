@@ -309,6 +309,15 @@ def revise_content(request: ReviseRequest, http_request: Request, authorization:
     return ai.revise(request)
 
 
+@app.post("/api/v1/quiz/import-text", response_model=quiz_import.ImportedQuestions)
+async def import_pasted_mcqs(payload: quiz_import.PastedQuizRequest):
+    # No AI access token, API key, subscription, or provider request required.
+    # Process the pasted text in memory; the student reviews before saving.
+    return await run_in_threadpool(
+        quiz_import.parse_text_questions, payload.text, payload.title
+    )
+
+
 @app.post("/api/v1/quiz/import", response_model=quiz_import.ImportedQuestions)
 async def import_ready_quiz(file: UploadFile = File(...)):
     # Parsing already-written MCQs requires no AI account or provider API call.
