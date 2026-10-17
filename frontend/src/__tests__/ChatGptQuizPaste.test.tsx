@@ -31,8 +31,7 @@ describe("ChatGPT quiz paste without Gemini",()=>{
     const control=screen.getByLabelText("عدد الأسئلة لقالب ChatGPT");
     expect(control).toHaveValue("40");
     await user.selectOptions(control,"20");
-    expect(screen.getByLabelText("نص طلب إنشاء أسئلة في ChatGPT")).toHaveValue(
-      expect.stringContaining("20 سؤال"));
+    expect((screen.getByLabelText("نص طلب إنشاء أسئلة في ChatGPT") as HTMLTextAreaElement).value).toContain("20 سؤال");
     await user.type(screen.getByLabelText("اسم المحاضرة للأسئلة المنسوخة"),"Week 4 Graphs");
     const pasted=[
       "1. What does the first chart describe?",
