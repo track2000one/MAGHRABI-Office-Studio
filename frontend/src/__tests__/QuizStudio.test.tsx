@@ -192,12 +192,56 @@ describe("Lecture Smart Quiz mastery experience",()=>{
   it("returns to saved question banks without storing the lecture source",async()=>{
     const user=await generate();
     const saved=localStorage.getItem("maghrabi-office-quiz-banks-v1")||"";
-    expect(saved).toContain("Circulation lecture practice");
+    expect(JSON.parse(saved)[0].title).toBe("lecture");
     expect(saved).not.toContain("[PAGE 1]");
     cleanup();
     render(<QuizStudio/>);
-    expect(screen.getByText("Circulation lecture practice")).toBeVisible();
+    expect(screen.getByText("lecture")).toBeVisible();
     expect(screen.getByRole("button",{name:"بدء الاختبار"})).toBeEnabled();
+  });
+  it("keeps multiple named lecture projects, lets users search, rename and fully retake without AI",async()=>{
+    const at="2026-10-16T00:00:00.000Z";
+    const create=(id:string,title:string,firstScore:number)=>({
+      id,title,filename:title+".pdf",createdAt:at,updatedAt:at,
+      difficulty:"hard",origin:"generated",firstScore,reviewIds:[0],
+      streaks:{0:0},reviewRounds:0,attempts:[],
+      bank:{title,questions:questions.map(q=>({...q}))},
+    });
+    localStorage.setItem("maghrabi-office-quiz-banks-v1",JSON.stringify([
+      create("lecture-graphs","Analyzing and Summarizing Graphs",60),
+      create("lecture-business","Introduction to Business",80),
+    ]));
+    const user=userEvent.setup();
+    render(<QuizStudio/>);
+    expect(screen.getByText("2 من 50 مشروعًا محفوظًا")).toBeVisible();
+    await user.type(screen.getByLabelText("البحث في مكتبة اختباراتي"),"Graphs");
+    expect(screen.getByText("Analyzing and Summarizing Graphs")).toBeVisible();
+    expect(screen.queryByText("Introduction to Business")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:"تغيير الاسم"}));
+    const input=screen.getByLabelText("الاسم الجديد للمحاضرة Analyzing and Summarizing Graphs");
+    await user.clear(input);
+    await user.type(input,"ملخص الجداول والرسوم");
+    await user.click(screen.getByRole("button",{name:"حفظ الاسم"}));
+    await user.clear(screen.getByLabelText("البحث في مكتبة اختباراتي"));
+    expect(screen.getByText("ملخص الجداول والرسوم")).toBeVisible();
+    expect(screen.getByText("Introduction to Business")).toBeVisible();
+    await user.click(screen.getAllByRole("button",{name:"إعادة الاختبار كاملًا"})[0]);
+    for(let i=0;i<5;i++) await answer(user,i,0,i===4);
+    expect((await screen.findAllByText(/100 من 100/)).length).toBeGreaterThan(0);
+    const projects=JSON.parse(localStorage.getItem("maghrabi-office-quiz-banks-v1")||"[]");
+    expect(projects).toHaveLength(2);
+    const graphs=projects.find((x:{id:string})=>x.id==="lecture-graphs");
+    expect(graphs.firstScore).toBe(60); // The first attempt never gets overwritten.
+    expect(graphs.attempts).toHaveLength(1);
+    expect(graphs.attempts[0]).toMatchObject({score:100,kind:"full",correct:5,total:5});
+    expect(projects.find((x:{id:string})=>x.id==="lecture-business").firstScore).toBe(80);
+    cleanup();
+    render(<QuizStudio/>);
+    expect(screen.getByText("ملخص الجداول والرسوم")).toBeVisible();
+    expect(screen.getByText("Introduction to Business")).toBeVisible();
+    expect(screen.getByText(/آخر درجة 100%/)).toBeVisible();
+    expect(screen.getAllByRole("button",{name:"إعادة الاختبار كاملًا"})).toHaveLength(2);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
   it("rejects an unsupported lecture size before upload",async()=>{
     const user=userEvent.setup();
