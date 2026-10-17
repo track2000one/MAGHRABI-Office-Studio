@@ -423,7 +423,7 @@ export default function QuizStudio() {
               <p><b>التفسير:</b> {q.explanation}</p>
               {q.source_quote && <blockquote>{q.source_quote}</blockquote>}
               <small className="muted">{active.origin==="imported"
-                ? "المصدر: "+active.filename+" · "+(active.filename.toLowerCase().endsWith(".pdf")?"صفحة "+q.source_page:"مستند Word")
+                ? "المصدر: "+active.filename+" · "+(active.filename.toLowerCase().endsWith(".txt")?"أسئلة منسوخة من ChatGPT":active.filename.toLowerCase().endsWith(".pdf")?"صفحة "+q.source_page:"مستند Word")
                 : q.source_verified===false
                   ? "لا يوجد اقتباس موثق لهذا السؤال؛ راجع المحاضرة للتحقق من صحة الإجابة."
                   : "المصدر: "+active.filename+" · "+(q.source_page===1?"المقطع المرجعي 1 / الصفحة 1":"صفحة "+q.source_page)}</small>
