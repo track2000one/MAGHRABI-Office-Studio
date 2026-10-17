@@ -92,7 +92,7 @@ def test_invalid_and_image_only_files_fail_without_ocr():
     assert "قابل" in str(blank.value.detail)
 
 
-def test_quiz_rejects_wrong_count_duplicate_options_and_unmatched_evidence(monkeypatch):
+def test_quiz_rejects_wrong_count_and_duplicate_options_but_not_unmatched_evidence(monkeypatch):
     monkeypatch.setattr(quiz.ai,"status",lambda:{"configured":True})
     monkeypatch.setattr(quiz, "_provider_quiz",lambda client,payload:json.dumps(mock_bank(5)))
     request=quiz.QuizRequest(source_text="[PAGE 1]\n"+SOURCE,count=10)
@@ -100,9 +100,10 @@ def test_quiz_rejects_wrong_count_duplicate_options_and_unmatched_evidence(monke
         quiz.create_quiz(request)
     assert count_error.value.status_code==502
     monkeypatch.setattr(quiz,"_provider_quiz",lambda client,payload:json.dumps(mock_bank(5,quote="Quote never present in user lecture")))
-    with pytest.raises(Exception) as source_error:
-        quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 1]\n"+SOURCE,count=5))
-    assert source_error.value.status_code==502
+    created=quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 1]\n"+SOURCE,count=5))
+    assert len(created.questions)==5
+    assert all(q.source_verified is False for q in created.questions)
+    assert all(q.source_quote == "" and q.source_page == 0 for q in created.questions)
     bad=mock_bank(5)
     bad["questions"][0]["options"]=["same","same","different","another"]
     monkeypatch.setattr(quiz,"_provider_quiz",lambda client,payload:json.dumps(bad))
@@ -119,6 +120,7 @@ def test_question_evidence_page_is_derived_not_trusted(monkeypatch):
     data=quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 1]\n"+SOURCE,count=5))
     assert len(data.questions)==5
     assert data.questions[0].source_page==1
+    assert data.questions[0].source_verified is True
 
 
 def test_endpoint_requires_ai_session_and_reuses_upload_text(monkeypatch):
@@ -184,39 +186,48 @@ def test_unicode_case_spacing_and_arabic_diacritics_resolve_original_evidence():
     assert "التَّقريرِ" in match[1]
 
 
-def test_grounding_failures_retry_once_and_then_start_exam(monkeypatch):
-    monkeypatch.setattr(quiz.ai, "status", lambda: {"configured": True})
-    incorrect = mock_bank(5, quote="Unsupported medical claims not in the lecture.")
-    valid = mock_bank(5)
-    responses = iter([incorrect, valid])
-    payloads = []
-
-    def provider(client, payload):
-        payloads.append(payload.copy())
-        return json.dumps(next(responses))
-
-    monkeypatch.setattr(quiz, "_provider_quiz", provider)
-    generated = quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 1]\n" + SOURCE, count=5))
-    assert len(generated.questions) == 5
-    assert len(payloads) == 2
-    assert "validation_feedback" not in payloads[0]
-    assert "validation_feedback" in payloads[1]
-    assert generated.questions[0].source_quote in SOURCE
-
-
-def test_persistent_hallucinated_quotes_are_rejected_after_one_retry(monkeypatch):
+def test_unverifiable_quote_does_not_retry_or_block_valid_exam(monkeypatch):
     monkeypatch.setattr(quiz.ai, "status", lambda: {"configured": True})
     calls = []
     def provider(client, payload):
         calls.append(payload.copy())
-        return json.dumps(mock_bank(5, quote="Unsupported lecture statement that was not in the file."))
+        return json.dumps(mock_bank(5, quote="Unsupported medical claims not in the lecture."))
+    monkeypatch.setattr(quiz, "_provider_quiz", provider)
+    generated = quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 1]\n" + SOURCE, count=5))
+    assert len(generated.questions) == 5
+    assert len(calls) == 1
+    assert all(q.source_quote == "" and q.source_page == 0 and not q.source_verified
+               for q in generated.questions)
 
+
+def test_mixed_verified_and_unverified_evidence_are_labelled_individually(monkeypatch):
+    monkeypatch.setattr(quiz.ai, "status", lambda: {"configured": True})
+    data = mock_bank(5)
+    data["questions"][0]["source_quote"] = "A fabricated quote that is absent from the uploaded PDF"
+    data["questions"][1]["source_quote"] = ""
+    monkeypatch.setattr(quiz, "_provider_quiz", lambda client, payload: json.dumps(data))
+    res = quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 2]\n" + SOURCE, count=5))
+    assert len(res.questions) == 5
+    assert not res.questions[0].source_verified and res.questions[0].source_page == 0
+    assert not res.questions[1].source_verified and res.questions[1].source_quote == ""
+    assert res.questions[2].source_verified
+    assert res.questions[2].source_quote in SOURCE
+    assert res.questions[2].source_page == 2
+
+
+def test_invalid_options_still_fail_after_one_structure_retry(monkeypatch):
+    monkeypatch.setattr(quiz.ai, "status", lambda: {"configured": True})
+    malformed = mock_bank(5)
+    malformed["questions"][0]["options"] = ["identical", "identical", "different", "last"]
+    calls=[]
+    def provider(client, payload):
+        calls.append(payload)
+        return json.dumps(malformed)
     monkeypatch.setattr(quiz, "_provider_quiz", provider)
     with pytest.raises(Exception) as error:
         quiz.create_quiz(quiz.QuizRequest(source_text="[PAGE 1]\n" + SOURCE, count=5))
-    assert error.value.status_code == 502
-    assert "إعادة المحاولة تلقائيًا" in error.value.detail
-    assert len(calls) == 2
+    assert error.value.status_code==502
+    assert len(calls)==2
 
 
 def test_page_reference_is_canonicalized_using_actual_pdf_page_number(monkeypatch):
