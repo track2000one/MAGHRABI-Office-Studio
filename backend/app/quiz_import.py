@@ -43,6 +43,11 @@ CORRECT_MARKER = re.compile(r"(?:\s*[✓✔✅]\s*|\s*\(\s*correct\s*\)\s*)$", r
 SIMPLE_QUESTION = re.compile(r"[؟?]\s*$")
 
 
+class PastedQuizRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_PASTED_CHARS)
+    title: str = Field(default="اختبار منسوخ من ChatGPT", max_length=160)
+
+
 class ImportedQuestion(BaseModel):
     number: int = Field(ge=1)
     question: str
