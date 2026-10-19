@@ -114,6 +114,7 @@ export default function PdfVisualEditor({
   const idCounter = useRef(0);
   const assetsRef = useRef<Record<string, AssetEntry>>({});
   const pageUrlRef = useRef("");
+  const pagePreviewCacheRef = useRef(new Map<number,string>());
   const thumbUrlsRef = useRef<Record<number, string>>({});
   const clipboardRef = useRef<VisualElement | null>(null);
   const dragRef = useRef<null | {
@@ -179,6 +180,10 @@ export default function PdfVisualEditor({
     setUndoStack([]);
     setRedoStack([]);
     setZoom(100);
+    // Every edited PDF is a new document; never reuse an old page render.
+    pagePreviewCacheRef.current.forEach(url=>URL.revokeObjectURL(url));
+    pagePreviewCacheRef.current.clear();
+    setPageUrl("");
     setCopyScope("next");
     setCopyPages("");
     clipboardRef.current = null;
@@ -194,34 +199,49 @@ export default function PdfVisualEditor({
 
   useEffect(() => {
     if (!active) return;
-    let cancelled = false;
-    const loadPage = async () => {
+    let cancelled=false;
+    const cached=pagePreviewCacheRef.current.get(page);
+    if(cached){
+      // Most page switching goes back/forward: reuse the exact cached image
+      // instead of uploading the entire PDF and rasterizing it again.
+      pagePreviewCacheRef.current.delete(page);
+      pagePreviewCacheRef.current.set(page,cached);
+      setPageUrl(cached);
+      setLoadingPage(false);
+      return()=>{cancelled=true;};
+    }
+    const loadPage=async()=>{
       setLoadingPage(true);
       try {
-        const form = new FormData();
-        form.append("file", file);
-        form.append("page_number", String(page));
-        form.append("max_width_px", "1600");
-        const response = await api("/pdf/render-page", { method: "POST", body: form });
-        const blob = await response.blob();
-        if (cancelled) return;
-        const url = URL.createObjectURL(blob);
-        setPageUrl((old) => {
-          if (old) URL.revokeObjectURL(old);
-          return url;
-        });
-      } catch (error) {
-        if (!cancelled)
-          onError(error instanceof Error ? error.message : "تعذر عرض صفحة PDF.");
-      } finally {
-        if (!cancelled) setLoadingPage(false);
+        const form=new FormData();
+        form.append("file",file);
+        form.append("page_number",String(page));
+        form.append("max_width_px","1450");
+        const response=await api("/pdf/render-page",{method:"POST",body:form});
+        const blob=await response.blob();
+        if(cancelled)return;
+        const url=URL.createObjectURL(blob);
+        const cache=pagePreviewCacheRef.current;
+        cache.set(page,url);
+        // Bound decoded 1450px previews to avoid excessive browser RAM.
+        while(cache.size>5){
+          const oldest=cache.keys().next().value;
+          if(oldest===undefined)break;
+          const oldUrl=cache.get(oldest);
+          cache.delete(oldest);
+          if(oldUrl)URL.revokeObjectURL(oldUrl);
+        }
+        setPageUrl(url);
+      }catch(error){
+        if(!cancelled)
+          onError(error instanceof Error?error.message:"تعذر عرض صفحة PDF.");
+      }finally{
+        if(!cancelled)setLoadingPage(false);
       }
     };
     void loadPage();
-    return () => {
-      cancelled = true;
-    };
-  }, [active, file, page]);
+    return()=>{cancelled=true;};
+  },[active,file,page]);
 
   useEffect(() => {
     if (!active) return;
@@ -296,7 +316,8 @@ export default function PdfVisualEditor({
 
   useEffect(() => {
     return () => {
-      if (pageUrlRef.current) URL.revokeObjectURL(pageUrlRef.current);
+      pagePreviewCacheRef.current.forEach(url=>URL.revokeObjectURL(url));
+      pagePreviewCacheRef.current.clear();
       Object.values(thumbUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
       Object.values(assetsRef.current).forEach((entry) => URL.revokeObjectURL(entry.url));
     };
