@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
+import {loadPdfThumbnails, PDF_THUMBNAIL_BATCH} from "./pdfThumbnails";
 
 type PdfInfo = {
   filename: string;
@@ -67,33 +68,35 @@ export default function PdfPageManager({
     thumbUrlsRef.current = thumbUrls;
   }, [thumbUrls]);
 
+  // Page reordering leaves this key unchanged: no cancelled or repeated
+  // thumbnail uploads on every drag-and-drop operation.
+  const sourcePagesKey=useMemo(
+    ()=>Array.from(new Set(plan.map(item=>item.sourcePage)))
+      .sort((a,b)=>a-b).join(","),
+    [plan],
+  );
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    const uniquePages = Array.from(new Set(plan.map((item) => item.sourcePage)));
-    const load = async () => {
-      for (const pageNumber of uniquePages) {
-        if (cancelled || thumbUrlsRef.current[pageNumber]) continue;
+    if(!open || !sourcePagesKey)return;
+    let cancelled=false;
+    const sourcePages=sourcePagesKey.split(",").map(Number);
+    const load=async()=>{
+      for(let start=0;start<sourcePages.length && !cancelled;start+=PDF_THUMBNAIL_BATCH){
+        const pages=sourcePages.slice(start,start+PDF_THUMBNAIL_BATCH)
+          .filter(p=>!thumbUrlsRef.current[p]);
+        if(!pages.length)continue;
         try {
-          const form = new FormData();
-          form.append("file", file);
-          form.append("page_number", String(pageNumber));
-          form.append("max_width_px", "360");
-          const response = await api("/pdf/render-page", { method: "POST", body: form });
-          const blob = await response.blob();
-          if (cancelled) break;
-          const url = URL.createObjectURL(blob);
-          setThumbUrls((current) => ({ ...current, [pageNumber]: url }));
-        } catch {
-          break;
+          const thumbnails=await loadPdfThumbnails(file,pages,260);
+          if(cancelled)return;
+          setThumbUrls(current=>({...current,...thumbnails}));
+        }catch{
+          // The page manager stays usable with numbered placeholders.
+          return;
         }
       }
     };
     void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, file, plan]);
+    return()=>{cancelled=true;};
+  },[open,file,sourcePagesKey]);
 
   useEffect(() => {
     return () => {

@@ -19,7 +19,7 @@ from .content import Content, GenerateRequest, ReviseRequest
 from . import ai, ai_session, quiz, quiz_import
 from .exports import export_docx, export_pptx, format_docx
 from .word_preview import render_word_preview
-from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, open_pdf, pt_to_mm, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
+from .pdf_tools import analyze_pdf, apply_visual_edits, edit_pdf, insert_image_into_pdf, manage_pdf_pages, merge_pdfs, render_pdf_page, render_pdf_thumbnails, open_pdf, pt_to_mm, MAX_IMAGE_UPLOAD, MAX_PDF_UPLOAD
 from openpyxl import load_workbook
 from pptx import Presentation
 
@@ -426,7 +426,7 @@ async def pdf_analyze(file: UploadFile = File(...)):
     data = await file.read(MAX_PDF_UPLOAD + 1)
     if len(data) > MAX_PDF_UPLOAD:
         raise HTTPException(413, "حجم ملف PDF يتجاوز 30 ميجابايت.")
-    return analyze_pdf(data, file.filename or "document.pdf")
+    return await run_in_threadpool(analyze_pdf, data, file.filename or "document.pdf")
 
 
 @app.post('/api/v1/pdf/edit')
@@ -504,8 +504,30 @@ async def pdf_render_page(
     data = await file.read(MAX_PDF_UPLOAD + 1)
     if len(data) > MAX_PDF_UPLOAD:
         raise HTTPException(413, "حجم ملف PDF يتجاوز 30 ميجابايت.")
-    preview = render_pdf_page(data, page_number, max_width_px)
+    preview = await run_in_threadpool(render_pdf_page, data, page_number, max_width_px)
     return Response(preview, media_type='image/png', headers={'Cache-Control': 'no-store'})
+
+
+@app.post('/api/v1/pdf/render-thumbnails')
+async def pdf_render_thumbnails(
+    file: UploadFile = File(...),
+    pages: str = Form(...),
+    max_width_px: int = Form(240),
+):
+    if Path(file.filename or '').suffix.lower() != '.pdf':
+        raise HTTPException(415, "اختر ملف PDF.")
+    # Validate the page list before reading or opening the file.
+    tokens = [token.strip() for token in pages.split(',')]
+    if not (1 <= len(tokens) <= 8) or any(not p.isdecimal() for p in tokens):
+        raise HTTPException(422, "حدد من صفحة إلى 8 صفحات بأرقام مفصولة بفاصلة.")
+    page_numbers = [int(token) for token in tokens]
+    data = await file.read(MAX_PDF_UPLOAD + 1)
+    if len(data) > MAX_PDF_UPLOAD:
+        raise HTTPException(413, "حجم ملف PDF يتجاوز 30 ميجابايت.")
+    previews = await run_in_threadpool(
+        render_pdf_thumbnails, data, page_numbers, max_width_px
+    )
+    return {'pages': previews}
 
 
 @app.post('/api/v1/pdf/insert-image')
