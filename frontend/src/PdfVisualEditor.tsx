@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import { api } from "./api";
+import {loadPdfThumbnails, PDF_THUMBNAIL_BATCH} from "./pdfThumbnails";
 
 type PageInfo = {
   page: number;
@@ -224,33 +225,31 @@ export default function PdfVisualEditor({
 
   useEffect(() => {
     if (!active) return;
-    let cancelled = false;
-    const maxThumbs = Math.min(info.pages, 60);
-    const load = async () => {
-      for (let pageNumber = 1; pageNumber <= maxThumbs && !cancelled; pageNumber += 1) {
+    let cancelled=false;
+    // Loading all 60 thumbnails previously uploaded/re-opened the entire
+    // PDF 60 times. Eight pages now share one upload/open. The first group
+    // becomes visible quickly while later batches load in the background.
+    const maxThumbs=Math.min(info.pages,60);
+    const load=async()=>{
+      for(let start=1;start<=maxThumbs && !cancelled;start+=PDF_THUMBNAIL_BATCH){
+        const pages=Array.from(
+          {length:Math.min(PDF_THUMBNAIL_BATCH,maxThumbs-start+1)},
+          (_,i)=>start+i,
+        ).filter(p=>!thumbUrlsRef.current[p]);
+        if(!pages.length)continue;
         try {
-          const form = new FormData();
-          form.append("file", file);
-          form.append("page_number", String(pageNumber));
-          form.append("max_width_px", "320");
-          const response = await api("/pdf/render-page", { method: "POST", body: form });
-          const blob = await response.blob();
-          if (cancelled) break;
-          const url = URL.createObjectURL(blob);
-          setThumbUrls((old) => {
-            if (old[pageNumber]) URL.revokeObjectURL(old[pageNumber]);
-            return { ...old, [pageNumber]: url };
-          });
-        } catch {
-          break;
+          const next=await loadPdfThumbnails(file,pages,220);
+          if(cancelled)return;
+          setThumbUrls(current=>({...current,...next}));
+        }catch{
+          // Keep navigation available if thumbnails cannot be rendered.
+          return;
         }
       }
     };
     void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [active, file, info.pages]);
+    return()=>{cancelled=true;};
+  },[active,file,info.pages]);
 
   useEffect(() => {
     if (!active) return;
