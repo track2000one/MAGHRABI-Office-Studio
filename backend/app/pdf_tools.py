@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from html import escape
 from io import BytesIO
+from base64 import b64encode
 import re
 
 import pymupdf
@@ -342,6 +343,39 @@ def merge_pdfs(files: list[bytes]) -> bytes:
     finally:
         merged.close()
 
+
+
+def render_pdf_thumbnails(
+    data: bytes, pages: list[int], max_width_px: int = 240,
+) -> list[dict[str, object]]:
+    """Render a *small batch* of thumbnails from one PDF open/upload.
+
+    JPEG is intentionally used for navigation thumbnails only; full editing
+    pages continue to be rendered losslessly via /pdf/render-page.
+    """
+    if not pages or len(pages) > 8 or len(set(pages)) != len(pages):
+        raise HTTPException(422, "حدد من صفحة إلى 8 صفحات مختلفة لكل دفعة.")
+    if max_width_px < 120 or max_width_px > 480:
+        raise HTTPException(422, "عرض الصور المصغرة يجب أن يكون بين 120 و480 بكسل.")
+    doc = open_pdf(data)
+    try:
+        if any(p < 1 or p > doc.page_count for p in pages):
+            raise HTTPException(422, f"أرقام الصفحات يجب أن تكون بين 1 و{doc.page_count}.")
+        results: list[dict[str, object]] = []
+        for page_no in pages:
+            page = doc[page_no - 1]
+            # Unlike the full-page renderer, never force a minimum 1x scale.
+            # Otherwise a 240px thumbnail unnecessarily renders at 600px+.
+            zoom = min(1.5, max(0.1, max_width_px / max(page.rect.width, 1)))
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom),
+                                  colorspace=pymupdf.csRGB, alpha=False)
+            data_uri = "data:image/jpeg;base64," + b64encode(
+                pix.tobytes("jpeg", jpg_quality=72)
+            ).decode("ascii")
+            results.append({"page": page_no, "image": data_uri})
+        return results
+    finally:
+        doc.close()
 
 
 def render_pdf_page(data: bytes, page_number: int, max_width_px: int = 1200) -> bytes:
