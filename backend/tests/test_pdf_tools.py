@@ -346,3 +346,58 @@ def test_pdf_manage_pages_rejects_empty_plan():
         data={"page_plan_json": "[]"},
     )
     assert response.status_code == 422
+
+
+
+def test_pdf_thumbnail_batch_renders_ordered_compact_jpeg_images():
+    from base64 import b64decode
+    data=make_pdf(page_sizes=((595,842),)*9)
+    result=client.post(
+        "/api/v1/pdf/render-thumbnails",
+        files={"file":("lecture.pdf",data,"application/pdf")},
+        data={"pages":"3,1,7,8","max_width_px":"240"},
+    )
+    assert result.status_code==200,result.text
+    thumbs=result.json()["pages"]
+    assert [item["page"] for item in thumbs]==[3,1,7,8]
+    for item in thumbs:
+        assert item["image"].startswith("data:image/jpeg;base64,")
+        content=b64decode(item["image"].split(",",1)[1])
+        assert content.startswith(b"\xff\xd8")
+        image=Image.open(BytesIO(content))
+        assert image.width <= 241
+        assert image.height > image.width
+    # Batch rendering is not permitted to modify any input PDF.
+    with pymupdf.open(stream=data,filetype="pdf") as untouched:
+        assert untouched.page_count==9
+
+
+def test_pdf_thumbnail_batch_limits_pages_width_and_upload_type():
+    data=make_pdf(page_sizes=((595,842),)*9)
+    def post(pages,width="240",name="lecture.pdf"):
+        return client.post("/api/v1/pdf/render-thumbnails",
+            files={"file":(name,data,"application/pdf")},
+            data={"pages":pages,"max_width_px":width})
+    assert post("1,2,3,4,5,6,7,8").status_code==200
+    for invalid in ["","1,1","1,10","1,2,3,4,5,6,7,8,9","1,abc","0"]:
+        assert post(invalid).status_code==422
+    assert post("1","90").status_code==422
+    assert post("1","900").status_code==422
+    assert post("1",name="not-a-pdf.txt").status_code==415
+
+
+def test_pdf_thumbnail_batch_single_document_open(monkeypatch):
+    from app import pdf_tools
+    data=make_pdf(page_sizes=((595,842),)*8)
+    calls=[]
+    real_open=pdf_tools.open_pdf
+    def spy(blob):
+        calls.append(len(blob))
+        return real_open(blob)
+    monkeypatch.setattr(pdf_tools,"open_pdf",spy)
+    response=client.post("/api/v1/pdf/render-thumbnails",
+        files={"file":("book.pdf",data,"application/pdf")},
+        data={"pages":"1,2,3,4,5,6,7,8"})
+    assert response.status_code==200
+    assert len(response.json()["pages"])==8
+    assert calls==[len(data)]
