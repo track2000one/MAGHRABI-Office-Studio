@@ -2247,3 +2247,97 @@ textarea::placeholder {
   .ready-import-source-tabs .button,.ready-prompt-tools .button {width:100%;}
   .ready-chatgpt-instructions {padding:14px;}
 }
+
+
+/* Vector drawing tools for the visual PDF editor */
+.pdf-shape-toolbar {
+  display: grid;
+  gap: 9px;
+  margin: 0 0 18px;
+  padding: 13px 15px;
+  border: 1px solid #d9e5eb;
+  border-radius: 12px;
+  background: #f7fafc;
+}
+.pdf-shape-toolbar > strong {
+  color: #163b50;
+  font-size: 13px;
+}
+.pdf-shape-tool-list {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.pdf-shape-tool {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 10px;
+  border: 1px solid #b9cbd5;
+  border-radius: 8px;
+  background: white;
+  color: #244456;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  min-height: 38px;
+}
+.pdf-shape-tool > span {
+  font-size: 20px;
+  line-height: 1;
+}
+.pdf-shape-tool:hover {
+  background: #e9f3f6;
+}
+.pdf-shape-tool.active,
+.pdf-shape-tool[aria-pressed="true"] {
+  border-color: #0b777b;
+  background: #137e82;
+  color: white;
+  box-shadow: 0 3px 9px rgba(10, 107, 112, 0.18);
+}
+.pdf-shape-tool:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.pdf-shape-toolbar > p {
+  margin: 0;
+  line-height: 1.6;
+}
+.pdf-editor-stage.drawing {
+  cursor: crosshair;
+}
+.pdf-editor-stage.drawing .pdf-canvas-element {
+  pointer-events: none;
+}
+.pdf-shape-graphic {
+  user-select: none;
+  pointer-events: none;
+}
+.pdf-drawing-preview {
+  pointer-events: none;
+  border: 1px dashed rgba(15, 143, 145, 0.7);
+  z-index: 6;
+}
+.pdf-shape-inspector {
+  margin: 12px 0;
+  padding: 11px;
+  border: 1px solid #d7e5e8;
+  background: #f1f8f8;
+  border-radius: 9px;
+}
+.pdf-shape-inspector > strong {
+  color: #14555b;
+  font-size: 12px;
+}
+.pdf-shape-inspector input[type="color"] {
+  height: 36px;
+  padding: 2px;
+  cursor: pointer;
+}
+@media (max-width: 650px) {
+  .pdf-shape-toolbar { padding: 10px; }
+  .pdf-shape-tool-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pdf-shape-tool { min-width: 0; font-size: 11px; }
+}
