@@ -333,8 +333,8 @@ export default function PdfVisualEditor({
     };
   }
 
-  async function persistDraft(revision: number): Promise<void> {
-    if (revision !== draftRevision.current || !draftEnabled || !draftKey) return;
+  async function persistDraft(revision: number): Promise<boolean> {
+    if (revision !== draftRevision.current || !draftEnabled || !draftKey) return false;
     const snapshot = snapshotDraft();
     setDraftStatus("saving");
     const write = draftWriteQueue.current.catch(() => undefined)
@@ -348,12 +348,14 @@ export default function PdfVisualEditor({
         setDraftMessage("");
         setDraftStatus("saved");
       }
+      return true;
     } catch (error) {
       if (revision === draftRevision.current) {
         setDraftStatus("error");
         setDraftMessage(error instanceof Error ? error.message :
           "تعذر حفظ المسودة. تحقّق من مساحة المتصفح.");
       }
+      return false;
     }
   }
 
@@ -923,6 +925,16 @@ export default function PdfVisualEditor({
     event.currentTarget.releasePointerCapture?.(event.pointerId);
   }
 
+  async function closeEditor() {
+    if (elements.length && draftStatus !== "saved") {
+      const saved = draftEnabled && draftKey
+        ? await persistDraft(++draftRevision.current) : false;
+      if (!saved && !window.confirm("التعديلات غير محفوظة كمسودة. هل تريد إغلاق المحرر رغم ذلك؟"))
+        return;
+    }
+    setActive(false);
+  }
+
   async function saveVisualEdits() {
     if (!elements.length) {
       onError("أضف نصًا أو صورة أو توقيعًا أو شكلًا مرسومًا قبل الحفظ.");
@@ -930,6 +942,8 @@ export default function PdfVisualEditor({
     }
     setSaving(true);
     try {
+      // Preserve editable source elements before flattening them into the PDF.
+      if (draftEnabled && draftKey) await persistDraft(++draftRevision.current);
       const usedAssetIds = Array.from(
         new Set(
           elements
@@ -1039,7 +1053,7 @@ export default function PdfVisualEditor({
           </p>
         </div>
         <div className="pdf-visual-toolbar" role="toolbar" aria-label="أدوات المحرر المرئي">
-          <button className="button outline" onClick={() => setActive(false)} disabled={saving}>إغلاق</button>
+          <button className="button outline" onClick={() => void closeEditor()} disabled={saving}>إغلاق</button>
           <button className="button outline" onClick={addText} disabled={saving}>＋ نص</button>
           <button className="button outline" onClick={() => requestAsset("image")} disabled={saving}>＋ صورة</button>
           <button className="button outline" onClick={() => requestAsset("signature")} disabled={saving}>＋ توقيع</button>
@@ -1059,6 +1073,45 @@ export default function PdfVisualEditor({
             }}
           />
         </div>
+      </div>
+
+      <div className="pdf-draft-status" role="status" aria-live="polite">
+        {pendingDraft ? (
+          <>
+            <div>
+              <strong>توجد مسودة محفوظة لهذا المستند</strong>
+              <p className="muted small">
+                {pendingDraft.elements.length} عنصرًا · آخر حفظ {new Date(pendingDraft.updatedAt).toLocaleString("ar-SA")}.
+                يمكنك استعادة العناصر والصور القابلة للتحرير.
+              </p>
+            </div>
+            <div className="pdf-draft-actions">
+              <button className="button primary" onClick={() => {
+                try { restoreSavedDraft(pendingDraft); }
+                catch (error) { setDraftMessage(error instanceof Error ? error.message : "تعذرت استعادة المشروع."); }
+              }}>استعادة المسودة</button>
+              <button className="button outline" onClick={() => void discardSavedDraft()}>بدء مشروع جديد وحذف المسودة</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <strong>حفظ مشروع PDF القابل للتحرير</strong>
+              <p className="muted small">
+                {draftStatus === "saved" && draftSavedAt ? \`حُفظت المسودة على هذا المتصفح: \${new Date(draftSavedAt).toLocaleTimeString("ar-SA")}.\` :
+                 draftStatus === "pending" ? "توجد تعديلات، جارٍ تجهيز الحفظ التلقائي…" :
+                 draftStatus === "saving" ? "جارٍ حفظ المشروع والصور…" :
+                 draftStatus === "error" ? "الحفظ التلقائي غير متاح حاليًا. يمكنك تصدير PDF النهائي." :
+                 "تُحفظ عناصر الرسم والصور تلقائيًا بعد التعديل، ويمكن فتحها لاحقًا من مكتبة PDF."}
+              </p>
+              {draftMessage && <p className="pdf-draft-error">{draftMessage}</p>}
+            </div>
+            <button className="button outline" disabled={!draftEnabled || !draftKey || !elements.length}
+              onClick={() => { void persistDraft(++draftRevision.current); }}>
+              حفظ المشروع الآن
+            </button>
+          </>
+        )}
       </div>
 
       <div className="pdf-shape-toolbar" role="toolbar" aria-label="أدوات الرسم والأشكال">
