@@ -8,6 +8,10 @@ import {
 import { api } from "./api";
 import {loadPdfThumbnails, PDF_THUMBNAIL_BATCH} from "./pdfThumbnails";
 import {PdfShapeGraphic, PDF_SHAPE_TOOLS, shapeGeometry, type PdfDrawingTool, type PdfShapeKind, type ShapePoint} from "./pdfShapes";
+import {
+  pdfDraftKey, readPdfDraft, removePdfDraft, writePdfDraft,
+  type PdfDraftRecord,
+} from "./pdfDraftStore";
 
 type PageInfo = {
   page: number;
@@ -79,6 +83,8 @@ type Props = {
   onApplied: (file: File) => Promise<void>;
   onError: (message: string) => void;
   onNotice: (message: string) => void;
+  restoreDraftId?: string | null;
+  onUnsavedChange?: (unsaved: boolean) => void;
 };
 
 const MAX_HISTORY = 50;
@@ -121,6 +127,8 @@ export default function PdfVisualEditor({
   onApplied,
   onError,
   onNotice,
+  restoreDraftId = null,
+  onUnsavedChange,
 }: Props) {
   const assetInput = useRef<HTMLInputElement>(null);
   const assetMode = useRef<"image" | "signature">("image");
@@ -131,6 +139,9 @@ export default function PdfVisualEditor({
   const pagePreviewCacheRef = useRef(new Map<number,string>());
   const thumbUrlsRef = useRef<Record<number, string>>({});
   const clipboardRef = useRef<VisualElement | null>(null);
+  const draftRevision = useRef(0);
+  const draftWriteQueue = useRef<Promise<void>>(Promise.resolve());
+  const hadSavedDraft = useRef(false);
   const drawRef = useRef<null | {
     tool: Exclude<PdfDrawingTool, "select">;
     start: ShapePoint;
@@ -169,6 +180,12 @@ export default function PdfVisualEditor({
   const [saving, setSaving] = useState(false);
   const [copyScope, setCopyScope] = useState<"next" | "selected" | "all">("next");
   const [copyPages, setCopyPages] = useState("");
+  const [draftKey, setDraftKey] = useState("");
+  const [draftEnabled, setDraftEnabled] = useState(false);
+  const [pendingDraft, setPendingDraft] = useState<PdfDraftRecord | null>(null);
+  const [draftStatus, setDraftStatus] = useState<"idle" | "pending" | "saving" | "saved" | "error">("idle");
+  const [draftMessage, setDraftMessage] = useState("");
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
 
   const pageInfo = useMemo(
     () => info.page_sizes.find((item) => item.page === page) ?? info.page_sizes[0]!,
@@ -211,6 +228,14 @@ export default function PdfVisualEditor({
     setPageUrl("");
     setCopyScope("next");
     setCopyPages("");
+    setDraftEnabled(false);
+    setDraftKey("");
+    setPendingDraft(null);
+    setDraftStatus("idle");
+    setDraftMessage("");
+    setDraftSavedAt(null);
+    hadSavedDraft.current = false;
+    draftRevision.current++;
     clipboardRef.current = null;
     setThumbUrls((old) => {
       Object.values(old).forEach((url) => URL.revokeObjectURL(url));
