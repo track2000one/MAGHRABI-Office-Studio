@@ -212,6 +212,7 @@ export default function App() {
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [pdfHandoff, setPdfHandoff] = useState<File | null>(null);
+  const [pdfHasUnsavedChanges, setPdfHasUnsavedChanges] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const projectBackupInput = useRef<HTMLInputElement>(null);
@@ -289,6 +290,10 @@ export default function App() {
   }
   function changePage(next: Page) {
     if (!busy) {
+      if (page === "pdf" && next !== "pdf" && pdfHasUnsavedChanges &&
+          !window.confirm("لديك تعديلات في PDF لم يكتمل حفظ مسودتها. هل تريد مغادرة المحرر؟"))
+        return;
+      if (next !== "pdf") setPdfHasUnsavedChanges(false);
       setPage(next);
       setError("");
       setNotice("");
@@ -1944,7 +1949,7 @@ export default function App() {
             )}
           </div>
         )}
-        {page === "pdf" && <PdfStudio initialFile={pdfHandoff} />}
+        {page === "pdf" && <PdfStudio initialFile={pdfHandoff} onUnsavedChange={setPdfHasUnsavedChanges} />}
         {page === "quiz" && <QuizStudio />}
         {page === "projects" && (
           <>
