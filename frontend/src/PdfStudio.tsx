@@ -2,6 +2,10 @@ import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, use
 import { api } from "./api";
 import PdfVisualEditor from "./PdfVisualEditor";
 import PdfPageManager from "./PdfPageManager";
+import {
+  listPdfDrafts, readPdfDraft, removePdfDraft, pdfDraftKey,
+  type PdfDraftSummary,
+} from "./pdfDraftStore";
 
 type PdfPageInfo = {
   page: number;
@@ -97,6 +101,10 @@ export default function PdfStudio({ initialFile = null }: { initialFile?: File |
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [pdfUnsaved, setPdfUnsaved] = useState(false);
+  const [savedPdfDrafts, setSavedPdfDrafts] = useState<PdfDraftSummary[]>([]);
+  const [pdfDraftsError, setPdfDraftsError] = useState("");
+  const [restoreDraftId, setRestoreDraftId] = useState<string | null>(null);
 
   const allPages = useMemo(
     () => (info ? `1-${info.pages}` : ""),
@@ -184,6 +192,8 @@ export default function PdfStudio({ initialFile = null }: { initialFile?: File |
 
   async function chooseFile(next?: File) {
     if (!next) return;
+    if (pdfUnsaved && !window.confirm("توجد تعديلات PDF لم يُؤكد حفظ مسودتها بعد. هل تريد فتح ملف آخر؟")) return;
+    setRestoreDraftId(null);
     setBusy("جارٍ قراءة ملف PDF…");
     setError("");
     setNotice("");
@@ -194,6 +204,47 @@ export default function PdfStudio({ initialFile = null }: { initialFile?: File |
       setError(e instanceof Error ? e.message : "تعذر قراءة ملف PDF.");
     } finally {
       setBusy("");
+    }
+  }
+
+  useEffect(() => {
+    if (file) return;
+    let cancelled = false;
+    void listPdfDrafts()
+      .then(items => { if (!cancelled) { setSavedPdfDrafts(items); setPdfDraftsError(""); } })
+      .catch(error => { if (!cancelled) setPdfDraftsError(error instanceof Error ? error.message : "تعذر قراءة مكتبة PDF."); });
+    return () => { cancelled = true; };
+  }, [file]);
+
+  async function openSavedPdfProject(id: string) {
+    if (pdfUnsaved && !window.confirm("توجد تعديلات PDF لم يُؤكد حفظ مسودتها بعد. هل تريد فتح مشروع آخر؟")) return;
+    setBusy("جارٍ استعادة مشروع PDF…");
+    setError("");
+    try {
+      const project = await readPdfDraft(id);
+      if (!project) throw new Error("لم يعد المشروع موجودًا في هذا المتصفح.");
+      const source = project.source instanceof File ? project.source :
+        new File([project.source], project.title, { type: "application/pdf" });
+      if (await pdfDraftKey(source) !== id)
+        throw new Error("الملف المحفوظ لا يطابق رسومات المشروع؛ لم تُستعد التعديلات.");
+      setRestoreDraftId(id);
+      await analyze(source, true);
+      setNotice("تم فتح مشروع PDF، ويجري استعادة الأشكال والصور القابلة للتحرير.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "تعذّر فتح مشروع PDF.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function deleteSavedPdfProject(id: string) {
+    if (!window.confirm("هل تريد حذف هذا المشروع من المتصفح نهائيًا؟ لا يمكن التراجع عن الحذف.")) return;
+    try {
+      await removePdfDraft(id);
+      setSavedPdfDrafts(await listPdfDrafts());
+      setNotice("حُذف المشروع المحدد فقط، وبقيت بقية المشاريع محفوظة.");
+    } catch (error) {
+      setPdfDraftsError(error instanceof Error ? error.message : "تعذّر حذف المشروع.");
     }
   }
 
@@ -499,6 +550,39 @@ export default function PdfStudio({ initialFile = null }: { initialFile?: File |
             />
           </section>
 
+          <section className="panel pdf-draft-library">
+            <div className="pdf-draft-library-heading">
+              <div>
+                <h3>مشاريع PDF المحفوظة</h3>
+                <p className="muted small">
+                  استأنف الرسم والتعديل من مسودة محفوظة على هذا المتصفح دون رفع ملف PDF مرة أخرى.
+                </p>
+              </div>
+              <span>{savedPdfDrafts.length} مشروع</span>
+            </div>
+            {pdfDraftsError && <p className="pdf-draft-error">{pdfDraftsError}</p>}
+            {savedPdfDrafts.length ? (
+              <div className="pdf-draft-library-list">
+                {savedPdfDrafts.map(project => (
+                  <article className="pdf-draft-project-card" key={project.id}>
+                    <div>
+                      <strong title={project.title}>{project.title}</strong>
+                      <small>{project.elementCount} عنصر · آخر تعديل {new Date(project.updatedAt).toLocaleString("ar-SA")}</small>
+                    </div>
+                    <div className="pdf-draft-actions">
+                      <button type="button" className="button primary" disabled={!!busy}
+                        onClick={() => void openSavedPdfProject(project.id)}>فتح وتحرير</button>
+                      <button type="button" className="button outline" disabled={!!busy}
+                        onClick={() => void deleteSavedPdfProject(project.id)}>حذف</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="muted small">لا توجد مشاريع PDF محفوظة بعد. ارسم داخل ملف PDF لتظهر مسودته هنا تلقائيًا.</p>
+            )}
+          </section>
+
           <section className="panel pdf-merge-panel">
             <h3>دمج ملفات PDF</h3>
             <p className="muted small">
@@ -548,6 +632,15 @@ export default function PdfStudio({ initialFile = null }: { initialFile?: File |
               </p>
             </div>
             <div className="action-row">
+              <button type="button" className="button outline" disabled={!!busy}
+                onClick={() => {
+                  if (pdfUnsaved && !window.confirm("توجد تعديلات لم تُحفظ بعد. هل تريد مغادرة المشروع؟")) return;
+                  setFile(null);
+                  setInfo(null);
+                  setRestoreDraftId(null);
+                  setPdfUnsaved(false);
+                  setNotice("");
+                }}>مكتبة مشاريع PDF</button>
               <button
                 className="button outline"
                 disabled={!!busy}
@@ -917,6 +1010,8 @@ export default function PdfStudio({ initialFile = null }: { initialFile?: File |
                 <PdfVisualEditor
                   file={file}
                   info={info}
+                  restoreDraftId={restoreDraftId}
+                  onUnsavedChange={setPdfUnsaved}
                   onApplied={async (edited) => {
                     downloadBlob(edited, edited.name);
                     await analyze(edited, false);
