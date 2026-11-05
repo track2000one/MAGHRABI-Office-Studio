@@ -7,6 +7,7 @@ import {
 } from "react";
 import { api } from "./api";
 import {loadPdfThumbnails, PDF_THUMBNAIL_BATCH} from "./pdfThumbnails";
+import {PdfShapeGraphic, PDF_SHAPE_TOOLS, shapeGeometry, type PdfDrawingTool, type PdfShapeKind, type ShapePoint} from "./pdfShapes";
 
 type PageInfo = {
   page: number;
@@ -29,7 +30,7 @@ type PdfInfo = {
 
 type BaseElement = {
   id: string;
-  type: "text" | "image" | "signature";
+  type: "text" | "image" | "signature" | "shape";
   page: number;
   xMm: number;
   yMm: number;
@@ -56,7 +57,20 @@ type AssetElement = BaseElement & {
   keepAspect: boolean;
 };
 
-type VisualElement = TextElement | AssetElement;
+type ShapeElement = BaseElement & {
+  type: "shape";
+  shape: PdfShapeKind;
+  strokeColor: string;
+  fillColor: string;
+  fillEnabled: boolean;
+  strokeWidthPt: number;
+  dashed: boolean;
+  flipX: boolean;
+  flipY: boolean;
+  points: ShapePoint[];
+};
+
+type VisualElement = TextElement | AssetElement | ShapeElement;
 type AssetEntry = { file: File; url: string };
 
 type Props = {
@@ -117,6 +131,12 @@ export default function PdfVisualEditor({
   const pagePreviewCacheRef = useRef(new Map<number,string>());
   const thumbUrlsRef = useRef<Record<number, string>>({});
   const clipboardRef = useRef<VisualElement | null>(null);
+  const drawRef = useRef<null | {
+    tool: Exclude<PdfDrawingTool, "select">;
+    start: ShapePoint;
+    trail: ShapePoint[];
+    id: string;
+  }>(null);
   const dragRef = useRef<null | {
     mode: "move" | "resize";
     id: string;
@@ -143,6 +163,8 @@ export default function PdfVisualEditor({
   const [undoStack, setUndoStack] = useState<VisualElement[][]>([]);
   const [redoStack, setRedoStack] = useState<VisualElement[][]>([]);
   const [zoom, setZoom] = useState(100);
+  const [drawMode, setDrawMode] = useState<PdfDrawingTool>("select");
+  const [draftShape, setDraftShape] = useState<ShapeElement | null>(null);
   const [loadingPage, setLoadingPage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [copyScope, setCopyScope] = useState<"next" | "selected" | "all">("next");
@@ -180,6 +202,9 @@ export default function PdfVisualEditor({
     setUndoStack([]);
     setRedoStack([]);
     setZoom(100);
+    setDrawMode("select");
+    setDraftShape(null);
+    drawRef.current = null;
     // Every edited PDF is a new document; never reuse an old page render.
     pagePreviewCacheRef.current.forEach(url=>URL.revokeObjectURL(url));
     pagePreviewCacheRef.current.clear();
@@ -280,6 +305,12 @@ export default function PdfVisualEditor({
         target?.tagName === "TEXTAREA" ||
         target?.tagName === "SELECT" ||
         target?.isContentEditable;
+      if (event.key === "Escape") {
+        setDrawMode("select");
+        setDraftShape(null);
+        drawRef.current = null;
+        return;
+      }
       if (!typing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
         if (selectedId) {
           event.preventDefault();
@@ -553,6 +584,82 @@ export default function PdfVisualEditor({
     }
   }
 
+  function makeShape(
+    tool: Exclude<PdfDrawingTool, "select">,
+    id: string,
+    start: ShapePoint,
+    end: ShapePoint,
+    trail: ShapePoint[],
+  ): ShapeElement {
+    const shape: PdfShapeKind = tool === "filled-rectangle" ? "rectangle" : tool;
+    const geometry = shapeGeometry(start, end, shape === "freehand" ? trail : []);
+    return {
+      id, type: "shape", shape, page,
+      ...geometry,
+      rotation: 0, locked: false,
+      opacity: shape === "highlight" ? 0.35 : 1,
+      strokeColor: "#1477ad",
+      fillColor: shape === "highlight" ? "#ffe04a" : "#f5bd3c",
+      fillEnabled: shape === "highlight" || tool === "filled-rectangle",
+      strokeWidthPt: 2,
+      dashed: false,
+    };
+  }
+
+  function pointFromStage(event: ReactPointerEvent<HTMLElement>): ShapePoint {
+    const bounds = stageRef.current!.getBoundingClientRect();
+    return [
+      clamp(((event.clientX - bounds.left) / Math.max(bounds.width, 1)) * pageInfo.width_mm, 0, pageInfo.width_mm),
+      clamp(((event.clientY - bounds.top) / Math.max(bounds.height, 1)) * pageInfo.height_mm, 0, pageInfo.height_mm),
+    ];
+  }
+
+  function beginDraw(event: ReactPointerEvent<HTMLDivElement>) {
+    if (drawMode === "select") {
+      setSelectedId("");
+      return;
+    }
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const start = pointFromStage(event);
+    const id = makeId("shape", ++idCounter.current);
+    drawRef.current = { tool: drawMode, start, trail: [start], id };
+    setDraftShape(makeShape(drawMode, id, start, start, [start]));
+    setSelectedId("");
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveDraw(event: ReactPointerEvent<HTMLDivElement>) {
+    const drawing = drawRef.current;
+    if (!drawing) return;
+    const end = pointFromStage(event);
+    if (drawing.tool === "freehand" && drawing.trail.length < 1000) {
+      const last = drawing.trail[drawing.trail.length - 1]!;
+      if (Math.hypot(last[0] - end[0], last[1] - end[1]) > 0.4) drawing.trail.push(end);
+    }
+    setDraftShape(makeShape(drawing.tool, drawing.id, drawing.start, end, drawing.trail));
+  }
+
+  function endDraw(event: ReactPointerEvent<HTMLDivElement>, cancelled = false) {
+    const drawing = drawRef.current;
+    if (!drawing) return;
+    drawRef.current = null;
+    setDraftShape(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    if (cancelled) return;
+    const end = pointFromStage(event);
+    const trail = drawing.tool === "freehand" ? [...drawing.trail, end].slice(0, 1000) : [];
+    const distance = drawing.tool === "freehand"
+      ? trail.reduce((sum, point, i) => i ? sum + Math.hypot(point[0] - trail[i - 1]![0], point[1] - trail[i - 1]![1]) : 0, 0)
+      : Math.hypot(end[0] - drawing.start[0], end[1] - drawing.start[1]);
+    if (distance < 2) return;
+    const next = makeShape(drawing.tool, drawing.id, drawing.start, end, trail);
+    commit(current => [...current, next]);
+    setSelectedId(next.id);
+    setDrawMode("select");
+  }
+
   function beginDrag(
     event: ReactPointerEvent<HTMLElement>,
     element: VisualElement,
@@ -601,7 +708,7 @@ export default function PdfVisualEditor({
         }
         let width = Math.max(5, drag.startWidth + dxMm);
         let height = Math.max(5, drag.startHeight + dyMm);
-        if (item.type !== "text" && item.keepAspect) {
+        if ((item.type === "image" || item.type === "signature") && item.keepAspect) {
           const ratio = drag.startWidth / Math.max(drag.startHeight, 0.1);
           if (Math.abs(dxMm) >= Math.abs(dyMm) * ratio) height = width / ratio;
           else width = height * ratio;
