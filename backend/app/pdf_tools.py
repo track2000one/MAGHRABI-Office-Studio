@@ -557,8 +557,11 @@ def apply_visual_edits(data: bytes, elements: list[dict], assets: list[bytes]) -
 
             if page_number < 1 or page_number > doc.page_count:
                 raise HTTPException(422, f"رقم صفحة العنصر يجب أن يكون بين 1 و{doc.page_count}.")
-            if rotation not in (0, 90, 180, 270):
-                raise HTTPException(422, "تدوير العناصر يجب أن يكون 0 أو 90 أو 180 أو 270 درجة.")
+            if kind == "shape":
+                if rotation < 0 or rotation > 359:
+                    raise HTTPException(422, "زاوية الشكل يجب أن تكون بين 0 و359 درجة.")
+            elif rotation not in (0, 90, 180, 270):
+                raise HTTPException(422, "تدوير النص والصورة يجب أن يكون 0 أو 90 أو 180 أو 270 درجة.")
             if opacity <= 0 or opacity > 1:
                 raise HTTPException(422, "شفافية العناصر يجب أن تكون أكبر من صفر وحتى 1.")
 
@@ -566,8 +569,6 @@ def apply_visual_edits(data: bytes, elements: list[dict], assets: list[bytes]) -
             target = _visual_rect(page, element)
 
             if kind == "shape":
-                if rotation != 0:
-                    raise HTTPException(422, "تدوير الأشكال الهندسية غير مدعوم حاليًا.")
                 render_pdf_shape(page, target, element)
                 continue
 
