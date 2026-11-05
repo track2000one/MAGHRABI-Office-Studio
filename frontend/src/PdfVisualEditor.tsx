@@ -247,6 +247,166 @@ export default function PdfVisualEditor({
     });
   }, [file]);
 
+  function restoreSavedDraft(draft: PdfDraftRecord) {
+    const restored = draft.elements as VisualElement[];
+    const assetIds = new Set(draft.assets.map(item => item.id));
+    const valid = restored.every(item => {
+      if (!item || typeof item !== "object" ||
+          typeof item.id !== "string" ||
+          !["text", "image", "signature", "shape"].includes(item.type) ||
+          !Number.isInteger(item.page) || item.page < 1 || item.page > info.pages ||
+          ![item.xMm, item.yMm, item.widthMm, item.heightMm, item.opacity].every(Number.isFinite) ||
+          item.widthMm <= 0 || item.heightMm <= 0) return false;
+      if (item.type === "image" || item.type === "signature")
+        return typeof item.assetId === "string" && assetIds.has(item.assetId);
+      if (item.type === "shape")
+        return typeof item.shape === "string" && typeof item.strokeColor === "string" &&
+          Array.isArray(item.points);
+      return typeof item.text === "string";
+    });
+    if (!valid)
+      throw new Error("تعذر استعادة المشروع: توجد عناصر غير صالحة، ولم تتغير المسودة المحفوظة.");
+
+    const restoredAssets: Record<string, AssetEntry> = {};
+    for (const asset of draft.assets)
+      restoredAssets[asset.id] = { file: asset.file, url: URL.createObjectURL(asset.file) };
+    setAssets(current => {
+      Object.values(current).forEach(entry => URL.revokeObjectURL(entry.url));
+      return restoredAssets;
+    });
+    setElements(restored);
+    setUndoStack([]);
+    setRedoStack([]);
+    setSelectedId("");
+    setPage(Math.min(Math.max(draft.page, 1), info.pages));
+    setZoom(draft.zoom);
+    setActive(true);
+    setPendingDraft(null);
+    setDraftEnabled(true);
+    setDraftStatus("saved");
+    setDraftMessage("");
+    setDraftSavedAt(draft.updatedAt);
+    hadSavedDraft.current = true;
+    onNotice("تم استعادة مشروع PDF ورسوماته وصوره للتعديل.");
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const restore = async () => {
+      setDraftEnabled(false);
+      setPendingDraft(null);
+      try {
+        const key = await pdfDraftKey(file);
+        const saved = await readPdfDraft(key);
+        if (cancelled) return;
+        setDraftKey(key);
+        if (!saved) {
+          setDraftEnabled(true);
+          return;
+        }
+        hadSavedDraft.current = true;
+        if (restoreDraftId === key) restoreSavedDraft(saved);
+        else setPendingDraft(saved);
+      } catch (error) {
+        if (!cancelled) {
+          setDraftStatus("error");
+          setDraftMessage(error instanceof Error ? error.message : "تعذر الوصول إلى مشاريع PDF.");
+        }
+      }
+    };
+    void restore();
+    return () => { cancelled = true; };
+  }, [file, restoreDraftId]);
+
+  function snapshotDraft(): PdfDraftRecord {
+    const attached = new Set(
+      elements.filter((item): item is AssetElement =>
+        item.type === "image" || item.type === "signature").map(item => item.assetId),
+    );
+    return {
+      version: 1, id: draftKey, title: file.name.slice(0, 180),
+      updatedAt: Date.now(), source: file,
+      elements,
+      assets: Object.entries(assets).filter(([id]) => attached.has(id))
+        .map(([id, entry]) => ({ id, file: entry.file })),
+      page, zoom,
+    };
+  }
+
+  async function persistDraft(revision: number): Promise<void> {
+    if (revision !== draftRevision.current || !draftEnabled || !draftKey) return;
+    const snapshot = snapshotDraft();
+    setDraftStatus("saving");
+    const write = draftWriteQueue.current.catch(() => undefined)
+      .then(() => writePdfDraft(snapshot));
+    draftWriteQueue.current = write;
+    try {
+      await write;
+      if (revision === draftRevision.current) {
+        hadSavedDraft.current = true;
+        setDraftSavedAt(snapshot.updatedAt);
+        setDraftMessage("");
+        setDraftStatus("saved");
+      }
+    } catch (error) {
+      if (revision === draftRevision.current) {
+        setDraftStatus("error");
+        setDraftMessage(error instanceof Error ? error.message :
+          "تعذر حفظ المسودة. تحقّق من مساحة المتصفح.");
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!draftEnabled || !draftKey || (!elements.length && !hadSavedDraft.current)) return;
+    const revision = ++draftRevision.current;
+    setDraftStatus("pending");
+    const timer = window.setTimeout(() => { void persistDraft(revision); }, 850);
+    return () => window.clearTimeout(timer);
+  }, [file, draftEnabled, draftKey, elements, assets, page, zoom]);
+
+  useEffect(() => {
+    const unsaved = !!elements.length && (
+      draftStatus === "pending" || draftStatus === "saving" ||
+      draftStatus === "error" || !draftEnabled
+    );
+    onUnsavedChange?.(unsaved);
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (unsaved) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden" &&
+          draftEnabled && draftKey && unsaved)
+        void persistDraft(++draftRevision.current);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnload);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [elements, draftStatus, draftEnabled, draftKey, onUnsavedChange]);
+
+  async function discardSavedDraft() {
+    if (!pendingDraft || !window.confirm("سيُحذف المشروع المحفوظ نهائيًا من هذا المتصفح. هل تريد البدء من جديد؟"))
+      return;
+    try {
+      await removePdfDraft(pendingDraft.id);
+      setPendingDraft(null);
+      hadSavedDraft.current = false;
+      setDraftEnabled(true);
+      setDraftStatus("idle");
+      setDraftSavedAt(null);
+      setDraftMessage("");
+      onNotice("تم بدء مشروع جديد، ولن تُستعاد المسودة القديمة.");
+    } catch (error) {
+      setDraftMessage(error instanceof Error ? error.message : "تعذر حذف المشروع السابق.");
+    }
+  }
+
   useEffect(() => {
     if (!active) return;
     let cancelled=false;
