@@ -767,6 +767,20 @@ export default function PdfVisualEditor({
             rtl: item.rtl,
           };
         }
+        if (item.type === "shape") {
+          return {
+            ...base,
+            shape: item.shape,
+            stroke_color: item.strokeColor,
+            fill_color: item.fillColor,
+            fill_enabled: item.fillEnabled,
+            stroke_width_pt: item.strokeWidthPt,
+            dashed: item.dashed,
+            flip_x: item.flipX,
+            flip_y: item.flipY,
+            points: item.points,
+          };
+        }
         return {
           ...base,
           asset_index: assetIndex.get(item.assetId),
@@ -810,7 +824,7 @@ export default function PdfVisualEditor({
           <span className="welcome-label">VISUAL PDF EDITOR</span>
           <h3>المحرر المرئي الجديد</h3>
           <p className="muted small">
-            حرّك الصور والنصوص والتواقيع مباشرة فوق صفحات PDF مع تراجع وإعادة وتكبير وصور مصغرة للصفحات.
+            أضف النصوص والصور والتواقيع وارسم المستطيلات والدوائر والأسهم والتظليل مباشرة على صفحات PDF.
           </p>
         </div>
         <button className="button primary" onClick={() => setActive(true)}>
@@ -827,7 +841,7 @@ export default function PdfVisualEditor({
           <span className="welcome-label">VISUAL PDF EDITOR</span>
           <h3>المحرر المرئي</h3>
           <p className="muted small">
-            أضف عدة صور ونصوص وتواقيع، ثم حرّكها وكبّرها قبل حفظ PDF مرة واحدة. كل عنصر يرتبط بالصفحة التي أُضيف إليها فقط.
+            أضف النصوص والصور والتواقيع وارسم الأشكال فوق كل صفحة ثم حرّكها وعدّلها. لا تنتقل الرسومات إلى صفحات أخرى إلا عند نسخها صراحة.
           </p>
         </div>
         <div className="pdf-visual-toolbar" role="toolbar" aria-label="أدوات المحرر المرئي">
@@ -851,6 +865,27 @@ export default function PdfVisualEditor({
             }}
           />
         </div>
+      </div>
+
+      <div className="pdf-shape-toolbar" role="toolbar" aria-label="أدوات الرسم والأشكال">
+        <strong>أدوات الرسم</strong>
+        <div className="pdf-shape-tool-list">
+          {PDF_SHAPE_TOOLS.map(({tool, label, symbol}) => (
+            <button
+              key={tool}
+              type="button"
+              className={drawMode === tool ? "pdf-shape-tool active" : "pdf-shape-tool"}
+              aria-pressed={drawMode === tool}
+              title={label}
+              onClick={() => { setDrawMode(tool); setDraftShape(null); drawRef.current = null; }}
+              disabled={saving}
+            >
+              <span aria-hidden="true">{symbol}</span>
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="muted small">اختر أداة ثم اسحب داخل الصفحة لرسم الشكل. اضغط «تحديد» لتعديل الرسومات أو تحريكها.</p>
       </div>
 
       <div className="pdf-visual-editor-layout">
@@ -888,16 +923,30 @@ export default function PdfVisualEditor({
           <div className="pdf-canvas-scroll">
             <div
               ref={stageRef}
-              className="pdf-editor-stage"
+              className={drawMode === "select" ? "pdf-editor-stage" : "pdf-editor-stage drawing"}
               data-testid="pdf-editor-stage"
               style={{
                 width: `${Math.round(760 * (zoom / 100))}px`,
                 aspectRatio: `${pageInfo.width_mm} / ${pageInfo.height_mm}`,
               }}
-              onPointerDown={() => setSelectedId("")}
+              onPointerDown={beginDraw}
+              onPointerMove={moveDraw}
+              onPointerUp={event => endDraw(event)}
+              onPointerCancel={event => endDraw(event, true)}
             >
               {loadingPage && <div className="pdf-visual-loading">جارٍ تجهيز الصفحة…</div>}
               {pageUrl && <img className="pdf-editor-page-image" src={pageUrl} alt={`صفحة PDF رقم ${page}`} />}
+              {draftShape && (
+                <div className="pdf-canvas-element pdf-drawing-preview" data-testid="pdf-drawing-preview" style={{
+                  left: ((draftShape.xMm / pageInfo.width_mm) * 100) + "%",
+                  top: ((draftShape.yMm / pageInfo.height_mm) * 100) + "%",
+                  width: ((draftShape.widthMm / pageInfo.width_mm) * 100) + "%",
+                  height: ((draftShape.heightMm / pageInfo.height_mm) * 100) + "%",
+                  opacity: draftShape.opacity,
+                }}>
+                  <PdfShapeGraphic item={draftShape}/>
+                </div>
+              )}
 
               {pageElements.map((element) => {
                 const selectedNow = element.id === selectedId;
@@ -933,6 +982,8 @@ export default function PdfVisualEditor({
                       >
                         {element.text}
                       </div>
+                    ) : element.type === "shape" ? (
+                      <PdfShapeGraphic item={element} />
                     ) : (
                       <img
                         src={assets[element.assetId]?.url}
@@ -961,11 +1012,11 @@ export default function PdfVisualEditor({
 
         <aside className="pdf-element-inspector">
           <h4>خصائص العنصر</h4>
-          {!selected && <p className="muted small">حدد نصًا أو صورة أو توقيعًا من الصفحة لتعديل خصائصه.</p>}
+          {!selected && <p className="muted small">حدد نصًا أو صورة أو توقيعًا أو شكلًا هندسيًا من الصفحة لتعديل خصائصه.</p>}
           {selected && (
             <>
               <span className="pdf-element-type">
-                {selected.type === "text" ? "نص" : selected.type === "signature" ? "توقيع" : "صورة"}
+                {selected.type === "text" ? "نص" : selected.type === "shape" ? "شكل: " + selected.shape : selected.type === "signature" ? "توقيع" : "صورة"}
                 {selected.locked ? " · مقفل" : ""}
               </span>
 
@@ -1066,7 +1117,7 @@ export default function PdfVisualEditor({
                 </>
               )}
 
-              {selected.type !== "text" && (
+              {(selected.type === "image" || selected.type === "signature") && (
                 <label className="pdf-check">
                   <input
                     type="checkbox"
@@ -1076,6 +1127,37 @@ export default function PdfVisualEditor({
                   />
                   الحفاظ على تناسب الصورة
                 </label>
+              )}
+
+              {selected.type === "shape" && (
+                <div className="pdf-shape-inspector">
+                  <strong>خصائص الرسم</strong>
+                  <div className="two-fields">
+                    <label>لون الحدود
+                      <input aria-label="لون حدود الشكل" type="color" value={selected.strokeColor} disabled={selected.locked || selected.shape === "highlight"} onChange={event => updateSelected({strokeColor: event.target.value} as Partial<VisualElement>)} />
+                    </label>
+                    <label>لون التعبئة
+                      <input aria-label="لون تعبئة الشكل" type="color" value={selected.fillColor} disabled={selected.locked} onChange={event => updateSelected({fillColor: event.target.value} as Partial<VisualElement>)} />
+                    </label>
+                  </div>
+                  {(selected.shape === "rectangle" || selected.shape === "ellipse") && (
+                    <label className="pdf-check">
+                      <input type="checkbox" checked={selected.fillEnabled} disabled={selected.locked} onChange={event => updateSelected({fillEnabled: event.target.checked} as Partial<VisualElement>)} />
+                      تعبئة الشكل بلون
+                    </label>
+                  )}
+                  {selected.shape !== "highlight" && (
+                    <>
+                      <label>سُمك الحدود (نقطة)
+                        <input type="number" min="0.5" max="16" step="0.5" value={selected.strokeWidthPt} disabled={selected.locked} onChange={event => updateSelected({strokeWidthPt: Math.min(16, Math.max(0.5, Number(event.target.value) || 0.5))} as Partial<VisualElement>)} />
+                      </label>
+                      <label className="pdf-check">
+                        <input type="checkbox" checked={selected.dashed} disabled={selected.locked} onChange={event => updateSelected({dashed: event.target.checked} as Partial<VisualElement>)} />
+                        خط متقطع
+                      </label>
+                    </>
+                  )}
+                </div>
               )}
 
               <div className="two-fields">
@@ -1099,7 +1181,7 @@ export default function PdfVisualEditor({
                 </label>
               </div>
               <div className="two-fields">
-                <label>
+                {selected.type !== "shape" && <label>
                   التدوير
                   <select
                     value={selected.rotation}
@@ -1111,7 +1193,7 @@ export default function PdfVisualEditor({
                     <option value="180">180°</option>
                     <option value="270">270°</option>
                   </select>
-                </label>
+                </label>}
                 <label>
                   الشفافية {Math.round(selected.opacity * 100)}%
                   <input
