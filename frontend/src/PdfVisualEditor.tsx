@@ -8,6 +8,7 @@ import {
 import { api } from "./api";
 import {loadPdfThumbnails, PDF_THUMBNAIL_BATCH} from "./pdfThumbnails";
 import {PdfShapeGraphic, PDF_SHAPE_TOOLS, shapeGeometry, type PdfDrawingTool, type PdfShapeKind, type ShapePoint} from "./pdfShapes";
+import {alignSelection, snapSelectionMove, rotatedBounds, type Alignment} from "./pdfTransform";
 import {
   pdfDraftKey, readPdfDraft, removePdfDraft, writePdfDraft,
   type PdfDraftRecord,
@@ -40,7 +41,8 @@ type BaseElement = {
   yMm: number;
   widthMm: number;
   heightMm: number;
-  rotation: 0 | 90 | 180 | 270;
+  rotation: number;
+  groupId?: string;
   opacity: number;
   locked: boolean;
 };
@@ -151,6 +153,8 @@ export default function PdfVisualEditor({
   const dragRef = useRef<null | {
     mode: "move" | "resize";
     id: string;
+    ids: string[];
+    changed: boolean;
     startClientX: number;
     startClientY: number;
     startX: number;
@@ -170,6 +174,8 @@ export default function PdfVisualEditor({
   const [thumbUrls, setThumbUrls] = useState<Record<number, string>>({});
   const [elements, setElements] = useState<VisualElement[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [snapGuides, setSnapGuides] = useState<{x:number|null;y:number|null}>({x:null,y:null});
   const [assets, setAssets] = useState<Record<string, AssetEntry>>({});
   const [undoStack, setUndoStack] = useState<VisualElement[][]>([]);
   const [redoStack, setRedoStack] = useState<VisualElement[][]>([]);
@@ -191,6 +197,15 @@ export default function PdfVisualEditor({
     () => info.page_sizes.find((item) => item.page === page) ?? info.page_sizes[0]!,
     [info, page],
   );
+  const selectedPageElements = useMemo(
+    () => elements.filter(item => item.page === page && selectedIds.includes(item.id)),
+    [elements, selectedIds, page],
+  );
+  function selectOnly(id: string) {
+    setSelectedId(id);
+    setSelectedIds(id ? [id] : []);
+  }
+
   const selected = useMemo(
     () => elements.find((item) => item.id === selectedId) ?? null,
     [elements, selectedId],
@@ -215,7 +230,7 @@ export default function PdfVisualEditor({
   useEffect(() => {
     setPage(1);
     setElements([]);
-    setSelectedId("");
+    selectOnly("");
     setUndoStack([]);
     setRedoStack([]);
     setZoom(100);
@@ -276,9 +291,10 @@ export default function PdfVisualEditor({
       return restoredAssets;
     });
     setElements(restored);
+    setSelectedIds([]);
     setUndoStack([]);
     setRedoStack([]);
-    setSelectedId("");
+    selectOnly("");
     setPage(Math.min(Math.max(draft.page, 1), info.pages));
     setZoom(draft.zoom);
     setActive(true);
@@ -558,6 +574,7 @@ export default function PdfVisualEditor({
     setUndoStack((history) => history.slice(0, -1));
     setRedoStack((history) => [elements, ...history].slice(0, MAX_HISTORY));
     setElements(previous);
+    setSelectedIds(ids => ids.filter(id => previous.some(item => item.id === id)));
     setSelectedId((id) => (previous.some((item) => item.id === id) ? id : ""));
   }
 
@@ -567,6 +584,7 @@ export default function PdfVisualEditor({
     setRedoStack((history) => history.slice(1));
     setUndoStack((history) => [...history, elements].slice(-MAX_HISTORY));
     setElements(next);
+    setSelectedIds(ids => ids.filter(id => next.some(item => item.id === id)));
     setSelectedId((id) => (next.some((item) => item.id === id) ? id : ""));
   }
 
@@ -591,7 +609,7 @@ export default function PdfVisualEditor({
       rtl: true,
     };
     commit((current) => [...current, next]);
-    setSelectedId(id);
+    selectOnly(id);
   }
 
   function requestAsset(mode: "image" | "signature") {
@@ -630,14 +648,40 @@ export default function PdfVisualEditor({
       keepAspect: true,
     };
     commit((current) => [...current, next]);
-    setSelectedId(id);
+    selectOnly(id);
     onNotice(mode === "signature" ? "تمت إضافة التوقيع إلى مساحة العمل." : "تمت إضافة الصورة إلى مساحة العمل.");
   }
 
   function deleteSelected() {
-    if (saving || pendingDraft || !selectedId || selected?.locked) return;
-    commit((current) => current.filter((item) => item.id !== selectedId));
-    setSelectedId("");
+    if (saving || pendingDraft || !selectedIds.length) return;
+    const removable = new Set(selectedPageElements.filter(item => !item.locked).map(item => item.id));
+    if (!removable.size) return;
+    commit(current => current.filter(item => !removable.has(item.id)));
+    selectOnly("");
+  }
+
+  function selectAllOnPage() {
+    const ids = pageElements.filter(item => !item.locked).map(item => item.id);
+    setSelectedIds(ids);
+    setSelectedId(ids[ids.length - 1] || "");
+  }
+
+  function groupSelection() {
+    if (selectedPageElements.length < 2 || selectedPageElements.some(item => item.locked)) return;
+    const groupId = makeId("group", ++idCounter.current);
+    const ids = new Set(selectedPageElements.map(item => item.id));
+    commit(current => current.map(item => ids.has(item.id) ? {...item, groupId} : item));
+    onNotice("تم تجميع العناصر المحددة. يمكن تحريك المجموعة معًا وفك التجميع لاحقًا.");
+  }
+
+  function ungroupSelection() {
+    const groupIds = new Set(selectedPageElements.map(item => item.groupId).filter((x): x is string => !!x));
+    if (!groupIds.size || selectedPageElements.some(item => item.locked)) return;
+    commit(current => current.map(item =>
+      item.page === page && item.groupId && groupIds.has(item.groupId)
+        ? {...item, groupId: undefined} : item
+    ));
+    onNotice("تم فك التجميع مع بقاء كل عنصر مستقلاً في مكانه.");
   }
 
   function updateSelected(patch: Partial<VisualElement>) {
@@ -660,7 +704,7 @@ export default function PdfVisualEditor({
 
   function copySelectedToClipboard() {
     if (!selected) return;
-    clipboardRef.current = { ...selected };
+    clipboardRef.current = { ...selected, groupId: undefined };
     onNotice("تم نسخ العنصر. استخدم لصق أو Ctrl+V لإضافته إلى الصفحة الحالية.");
   }
 
@@ -674,10 +718,11 @@ export default function PdfVisualEditor({
       info.page_sizes.find((item) => item.page === page) ?? info.page_sizes[0]!;
     const pasted = cloneElementToPage(source, page);
     pasted.locked = false;
+    pasted.groupId = undefined;
     pasted.xMm = clamp(pasted.xMm + 5, 0, Math.max(0, targetInfo.width_mm - pasted.widthMm));
     pasted.yMm = clamp(pasted.yMm + 5, 0, Math.max(0, targetInfo.height_mm - pasted.heightMm));
     commit((current) => [...current, pasted]);
-    setSelectedId(pasted.id);
+    selectOnly(pasted.id);
     onNotice(`تم لصق العنصر في الصفحة ${page} كنسخة مستقلة.`);
   }
 
@@ -709,18 +754,36 @@ export default function PdfVisualEditor({
     });
   }
 
-  function alignSelected(
-    alignment: "left" | "center-x" | "right" | "top" | "center-y" | "bottom",
-  ) {
-    if (!selected || selected.locked) return;
-    const patch: Partial<VisualElement> = {};
-    if (alignment === "left") patch.xMm = 0;
-    if (alignment === "center-x") patch.xMm = Math.max(0, (pageInfo.width_mm - selected.widthMm) / 2);
-    if (alignment === "right") patch.xMm = Math.max(0, pageInfo.width_mm - selected.widthMm);
-    if (alignment === "top") patch.yMm = 0;
-    if (alignment === "center-y") patch.yMm = Math.max(0, (pageInfo.height_mm - selected.heightMm) / 2);
-    if (alignment === "bottom") patch.yMm = Math.max(0, pageInfo.height_mm - selected.heightMm);
-    updateSelected(patch);
+  function alignSelected(alignment: Alignment) {
+    if (!selectedPageElements.length || selectedPageElements.some(item => item.locked)) return;
+    const move = alignSelection(selectedPageElements, pageInfo, alignment);
+    if (Math.abs(move.dx) < 0.0001 && Math.abs(move.dy) < 0.0001) return;
+    const ids = new Set(selectedPageElements.map(item => item.id));
+    commit(current => current.map(item =>
+      ids.has(item.id) ? {
+        ...item,
+        xMm: Number((item.xMm + move.dx).toFixed(3)),
+        yMm: Number((item.yMm + move.dy).toFixed(3)),
+      } : item,
+    ));
+  }
+
+  function rotateSelectedShape(degrees: number) {
+    if (!selected || selected.type !== "shape" || selected.locked) return;
+    const rotation = Math.min(359, Math.max(0, Math.round(degrees)));
+    if (!Number.isFinite(rotation)) return;
+    const box = rotatedBounds({...selected, rotation});
+    if (box.right - box.left > pageInfo.width_mm || box.bottom - box.top > pageInfo.height_mm) {
+      onError("الشكل بعد تدويره أكبر من مساحة الصفحة. صغّر حجمه أولًا.");
+      return;
+    }
+    const dx = box.left < 0 ? -box.left : box.right > pageInfo.width_mm ? pageInfo.width_mm - box.right : 0;
+    const dy = box.top < 0 ? -box.top : box.bottom > pageInfo.height_mm ? pageInfo.height_mm - box.bottom : 0;
+    updateSelected({
+      rotation,
+      xMm: Number((selected.xMm + dx).toFixed(3)),
+      yMm: Number((selected.yMm + dy).toFixed(3)),
+    } as Partial<VisualElement>);
   }
 
   function cloneElementToPage(element: VisualElement, targetPage: number): VisualElement {
@@ -731,6 +794,7 @@ export default function PdfVisualEditor({
     return {
       ...element,
       id: makeId(element.type, ++idCounter.current),
+      groupId: undefined,
       page: targetPage,
       widthMm,
       heightMm,
@@ -813,7 +877,7 @@ export default function PdfVisualEditor({
   function beginDraw(event: ReactPointerEvent<HTMLDivElement>) {
     if (saving || pendingDraft) return;
     if (drawMode === "select") {
-      setSelectedId("");
+      selectOnly("");
       return;
     }
     if (event.button !== 0) return;
@@ -822,7 +886,7 @@ export default function PdfVisualEditor({
     const id = makeId("shape", ++idCounter.current);
     drawRef.current = { tool: drawMode, start, trail: [start], id };
     setDraftShape(makeShape(drawMode, id, start, start, [start]));
-    setSelectedId("");
+    selectOnly("");
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
@@ -855,7 +919,7 @@ export default function PdfVisualEditor({
         Math.min(Math.abs(end[0] - drawing.start[0]), Math.abs(end[1] - drawing.start[1])) < 2) return;
     const next = makeShape(drawing.tool, drawing.id, drawing.start, end, trail);
     commit(current => [...current, next]);
-    setSelectedId(next.id);
+    selectOnly(next.id);
     setDrawMode("select");
   }
 
@@ -865,25 +929,39 @@ export default function PdfVisualEditor({
     mode: "move" | "resize",
   ) {
     const stage = stageRef.current;
-    if (saving || pendingDraft || !stage || !pageInfo) return;
+    if (saving || pendingDraft || drawMode !== "select" || !stage || !pageInfo) return;
     event.preventDefault();
     event.stopPropagation();
+    const groupIds = element.groupId
+      ? pageElements.filter(item => item.groupId === element.groupId).map(item => item.id)
+      : [element.id];
+
+    if (mode === "move" && (event.shiftKey || event.ctrlKey || event.metaKey)) {
+      const alreadyIncluded = groupIds.every(id => selectedIds.includes(id));
+      const nextIds = alreadyIncluded
+        ? selectedIds.filter(id => !groupIds.includes(id))
+        : Array.from(new Set([...selectedIds, ...groupIds]));
+      setSelectedIds(nextIds);
+      setSelectedId(nextIds[nextIds.length - 1] || "");
+      return;
+    }
+    const ids = mode === "move" && selectedIds.includes(element.id) && selectedIds.length > 1
+      ? selectedIds : groupIds;
+    if (ids.some(id => elements.find(item => item.id === id)?.locked)) {
+      setSelectedIds(ids);
+      setSelectedId(element.id);
+      return;
+    }
+    setSelectedIds(ids);
     setSelectedId(element.id);
-    if (element.locked) return;
     const bounds = stage.getBoundingClientRect();
     dragRef.current = {
-      mode,
-      id: element.id,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startX: element.xMm,
-      startY: element.yMm,
-      startWidth: element.widthMm,
-      startHeight: element.heightMm,
-      pageWidthMm: pageInfo.width_mm,
-      pageHeightMm: pageInfo.height_mm,
-      stageWidth: Math.max(bounds.width, 1),
-      stageHeight: Math.max(bounds.height, 1),
+      mode, id: element.id, ids, changed: false,
+      startClientX: event.clientX, startClientY: event.clientY,
+      startX: element.xMm, startY: element.yMm,
+      startWidth: element.widthMm, startHeight: element.heightMm,
+      pageWidthMm: pageInfo.width_mm, pageHeightMm: pageInfo.height_mm,
+      stageWidth: Math.max(bounds.width, 1), stageHeight: Math.max(bounds.height, 1),
       before: elements,
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -895,37 +973,48 @@ export default function PdfVisualEditor({
     event.preventDefault();
     const dxMm = ((event.clientX - drag.startClientX) / drag.stageWidth) * drag.pageWidthMm;
     const dyMm = ((event.clientY - drag.startClientY) / drag.stageHeight) * drag.pageHeightMm;
-    setElements((current) =>
-      current.map((item) => {
-        if (item.id !== drag.id) return item;
-        if (drag.mode === "move") {
-          return {
-            ...item,
-            xMm: clamp(drag.startX + dxMm, 0, Math.max(0, drag.pageWidthMm - item.widthMm)),
-            yMm: clamp(drag.startY + dyMm, 0, Math.max(0, drag.pageHeightMm - item.heightMm)),
-          };
-        }
-        let width = Math.max(5, drag.startWidth + dxMm);
-        let height = Math.max(5, drag.startHeight + dyMm);
-        if ((item.type === "image" || item.type === "signature") && item.keepAspect) {
-          const ratio = drag.startWidth / Math.max(drag.startHeight, 0.1);
-          if (Math.abs(dxMm) >= Math.abs(dyMm) * ratio) height = width / ratio;
-          else width = height * ratio;
-        }
-        width = Math.min(width, Math.max(5, drag.pageWidthMm - item.xMm));
-        height = Math.min(height, Math.max(5, drag.pageHeightMm - item.yMm));
-        return { ...item, widthMm: width, heightMm: height };
-      }),
-    );
+    const activeIds = new Set(drag.ids);
+    if (drag.mode === "move") {
+      const moving = drag.before.filter(item => activeIds.has(item.id));
+      const other = drag.before.filter(item => item.page === page && !activeIds.has(item.id));
+      const snapped = snapSelectionMove(
+        moving, other, pageInfo, dxMm, dyMm, event.altKey ? 0 : 2,
+      );
+      drag.changed = drag.changed || Math.abs(snapped.dx) > 0.01 || Math.abs(snapped.dy) > 0.01;
+      setSnapGuides({x: snapped.guideX, y: snapped.guideY});
+      setElements(drag.before.map(item => activeIds.has(item.id) ? {
+        ...item, xMm: Number((item.xMm + snapped.dx).toFixed(3)),
+        yMm: Number((item.yMm + snapped.dy).toFixed(3)),
+      } : item));
+      return;
+    }
+    drag.changed = drag.changed || Math.abs(dxMm) > 0.01 || Math.abs(dyMm) > 0.01;
+    setElements(drag.before.map(item => {
+      if (item.id !== drag.id) return item;
+      let width = Math.max(5, drag.startWidth + dxMm);
+      let height = Math.max(5, drag.startHeight + dyMm);
+      if ((item.type === "image" || item.type === "signature") && item.keepAspect) {
+        const ratio = drag.startWidth / Math.max(drag.startHeight, 0.1);
+        if (Math.abs(dxMm) >= Math.abs(dyMm) * ratio) height = width / ratio;
+        else width = height * ratio;
+      }
+      width = Math.min(width, Math.max(5, drag.pageWidthMm - item.xMm));
+      height = Math.min(height, Math.max(5, drag.pageHeightMm - item.yMm));
+      return {...item, widthMm: width, heightMm: height};
+    }));
   }
 
   function endDrag(event: ReactPointerEvent<HTMLElement>) {
     const drag = dragRef.current;
     if (!drag) return;
     dragRef.current = null;
-    setUndoStack((history) => [...history, drag.before].slice(-MAX_HISTORY));
-    setRedoStack([]);
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    setSnapGuides({x:null,y:null});
+    if (drag.changed) {
+      setUndoStack(history => [...history, drag.before].slice(-MAX_HISTORY));
+      setRedoStack([]);
+    }
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
   async function closeEditor() {
@@ -1025,7 +1114,7 @@ export default function PdfVisualEditor({
         throw error;
       }
       setElements([]);
-      setSelectedId("");
+      selectOnly("");
       setUndoStack([]);
       setRedoStack([]);
       onNotice("تم تطبيق العناصر على PDF وحفظ نسخة المشروع القابلة للتعديل محليًا.");
@@ -1072,7 +1161,7 @@ export default function PdfVisualEditor({
           <button className="button outline" onClick={redo} disabled={!redoStack.length || saving} title="إعادة Ctrl+Y">↷</button>
           <button className="button outline" onClick={copySelectedToClipboard} disabled={!selectedId || saving}>نسخ</button>
           <button className="button outline" onClick={pasteClipboard} disabled={saving}>لصق</button>
-          <button className="button danger" onClick={deleteSelected} disabled={!selectedId || !!selected?.locked || saving}>حذف</button>
+          <button className="button danger" onClick={deleteSelected} disabled={!selectedPageElements.some(item => !item.locked) || saving}>حذف</button>
           <input
             ref={assetInput}
             type="file"
@@ -1146,6 +1235,20 @@ export default function PdfVisualEditor({
         <p className="muted small">اختر أداة ثم اسحب داخل الصفحة لرسم الشكل. اضغط «تحديد» لتعديل الرسومات أو تحريكها.</p>
       </div>
 
+      <div className="pdf-multi-toolbar" role="toolbar" aria-label="التحديد المتعدد والتجميع">
+        <span><strong>{selectedIds.length}</strong> عنصر محدد · اضغط Shift أو Ctrl عند اختيار العناصر لإضافتها</span>
+        <div className="pdf-multi-toolbar-actions">
+          <button type="button" className="button outline" disabled={saving || !!pendingDraft || !pageElements.length}
+            onClick={selectAllOnPage}>تحديد الكل في الصفحة</button>
+          <button type="button" className="button outline" disabled={saving || !!pendingDraft || selectedPageElements.length < 2 || selectedPageElements.some(item => item.locked)}
+            onClick={groupSelection}>تجميع</button>
+          <button type="button" className="button outline" disabled={saving || !!pendingDraft || !selectedPageElements.some(item => !!item.groupId)}
+            onClick={ungroupSelection}>فك التجميع</button>
+          <button type="button" className="button outline" disabled={!selectedIds.length}
+            onClick={() => selectOnly("")}>إلغاء التحديد</button>
+        </div>
+      </div>
+
       <div className="pdf-visual-editor-layout">
         <aside className="pdf-thumbnails" aria-label="صفحات PDF">
           {Array.from({ length: info.pages }, (_, index) => index + 1).map((pageNumber) => (
@@ -1154,7 +1257,7 @@ export default function PdfVisualEditor({
               className={pageNumber === page ? "pdf-thumb active" : "pdf-thumb"}
               onClick={() => {
                 setPage(pageNumber);
-                setSelectedId("");
+                selectOnly("");
               }}
             >
               {thumbUrls[pageNumber] ? (
@@ -1206,8 +1309,16 @@ export default function PdfVisualEditor({
                 </div>
               )}
 
+              {snapGuides.x !== null && (
+                <div className="pdf-snap-guide vertical" aria-hidden="true"
+                  style={{left: (snapGuides.x / pageInfo.width_mm * 100) + "%"}} />
+              )}
+              {snapGuides.y !== null && (
+                <div className="pdf-snap-guide horizontal" aria-hidden="true"
+                  style={{top: (snapGuides.y / pageInfo.height_mm * 100) + "%"}} />
+              )}
               {pageElements.map((element) => {
-                const selectedNow = element.id === selectedId;
+                const selectedNow = selectedIds.includes(element.id);
                 const commonStyle = {
                   left: `${(element.xMm / pageInfo.width_mm) * 100}%`,
                   top: `${(element.yMm / pageInfo.height_mm) * 100}%`,
@@ -1220,7 +1331,7 @@ export default function PdfVisualEditor({
                   <div
                     key={element.id}
                     data-testid={`visual-element-${element.type}`}
-                    className={`pdf-canvas-element ${selectedNow ? "selected" : ""} ${element.locked ? "locked" : ""}`}
+                    className={`pdf-canvas-element ${selectedNow ? "selected" : ""} ${element.locked ? "locked" : ""} ${element.groupId ? "grouped" : ""}`}
                     style={commonStyle}
                     onPointerDown={(event) => beginDrag(event, element, "move")}
                     onPointerMove={moveDrag}
@@ -1250,7 +1361,7 @@ export default function PdfVisualEditor({
                         style={{ objectFit: element.keepAspect ? "contain" : "fill" }}
                       />
                     )}
-                    {selectedNow && !element.locked && (
+                    {selectedNow && !element.locked && selectedIds.length === 1 && (
                       <button
                         type="button"
                         className="pdf-resize-handle"
@@ -1269,7 +1380,10 @@ export default function PdfVisualEditor({
         </div>
 
         <aside className="pdf-element-inspector">
-          <h4>خصائص العنصر</h4>
+          <h4>{selectedIds.length > 1 ? "خصائص العناصر المحددة" : "خصائص العنصر"}</h4>
+          {selectedIds.length > 1 && (
+            <p className="muted small">{selectedIds.length} عناصر محددة. المحاذاة تطبّق على المجموعة بأكملها، وتبقى خصائص العنصر الأخير منفصلة.</p>
+          )}
           {!selected && <p className="muted small">حدد نصًا أو صورة أو توقيعًا أو شكلًا هندسيًا من الصفحة لتعديل خصائصه.</p>}
           {selected && (
             <>
@@ -1390,6 +1504,19 @@ export default function PdfVisualEditor({
               {selected.type === "shape" && (
                 <div className="pdf-shape-inspector">
                   <strong>خصائص الرسم</strong>
+                  <label>زاوية تدوير الشكل (0–359°)
+                    <input type="number" aria-label="زاوية تدوير الشكل" min="0" max="359" step="1"
+                      disabled={selected.locked} value={selected.rotation}
+                      onChange={event => rotateSelectedShape(Number(event.target.value))} />
+                  </label>
+                  <input type="range" aria-label="تدوير الشكل بحرية" min="0" max="359" step="1"
+                    disabled={selected.locked} value={selected.rotation}
+                    onChange={event => rotateSelectedShape(Number(event.target.value))} />
+                  <div className="pdf-rotation-presets">
+                    <button type="button" disabled={selected.locked} onClick={() => rotateSelectedShape(0)}>0°</button>
+                    <button type="button" disabled={selected.locked} onClick={() => rotateSelectedShape((selected.rotation + 15) % 360)}>+15°</button>
+                    <button type="button" disabled={selected.locked} onClick={() => rotateSelectedShape((selected.rotation + 90) % 360)}>+90°</button>
+                  </div>
                   <div className="two-fields">
                     <label>لون الحدود
                       <input aria-label="لون حدود الشكل" type="color" value={selected.strokeColor} disabled={selected.locked || selected.shape === "highlight"} onChange={event => updateSelected({strokeColor: event.target.value} as Partial<VisualElement>)} />
@@ -1505,7 +1632,7 @@ export default function PdfVisualEditor({
                 </div>
               )}
 
-              <button className="button danger full" onClick={deleteSelected} disabled={selected.locked}>حذف العنصر</button>
+              <button className="button danger full" onClick={deleteSelected} disabled={!selectedPageElements.some(item => !item.locked)}>{selectedIds.length > 1 ? "حذف العناصر المحددة" : "حذف العنصر"}</button>
             </>
           )}
         </aside>

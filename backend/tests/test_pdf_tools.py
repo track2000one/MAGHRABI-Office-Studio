@@ -448,7 +448,8 @@ def test_pdf_visual_editor_rejects_malformed_shapes_and_paths():
         {"shape": "freehand", "points": [[0, 0]]},
         {"shape": "rectangle", "stroke_color": "url(evil)"},
         {"shape": "rectangle", "stroke_width_pt": 100},
-        {"shape": "rectangle", "rotation": 90},
+        {"shape": "rectangle", "rotation": 360},
+        {"shape": "rectangle", "rotation": -1},
         {"shape": "rectangle", "opacity": "NaN"},
     ]
     for changes in invalid:
@@ -458,3 +459,54 @@ def test_pdf_visual_editor_rejects_malformed_shapes_and_paths():
             data={"elements_json": json.dumps([{**base, **changes}])},
         )
         assert response.status_code == 422, (changes, response.text)
+
+
+def test_pdf_vector_rotation_matches_view_geometry_and_page_isolation():
+    data = make_pdf(page_sizes=((595, 842), (595, 842)))
+    template = {
+        "type": "shape", "page": 2, "shape": "rectangle", "x_mm": 30,
+        "y_mm": 50, "width_mm": 55, "height_mm": 20,
+        "opacity": 0.7, "rotation": 0,
+        "stroke_color": "#1875b1", "fill_color": "#f5c443",
+        "fill_enabled": True,
+    }
+    elements = [template, {
+        **template, "x_mm": 110, "rotation": 37,
+    }, {
+        **template, "shape": "arrow", "x_mm": 30, "y_mm": 100, "rotation": 135,
+    }, {
+        **template, "shape": "freehand", "y_mm": 130, "rotation": 19,
+        "points": [[0, 0], [0.35, 0.75], [1, 1]],
+    }]
+    response = client.post("/api/v1/pdf/apply-visual-edits",
+        files={"file": ("plan.pdf", data, "application/pdf")},
+        data={"elements_json": json.dumps(elements)},
+    )
+    assert response.status_code == 200, response.text
+    with pymupdf.open(stream=response.content, filetype="pdf") as doc:
+        assert doc.page_count == 2
+        assert not doc[0].get_drawings()
+        drawings = doc[1].get_drawings()
+        assert len(drawings) >= 4
+        rect0, rect37 = drawings[0]["rect"], drawings[1]["rect"]
+        assert rect37.height > rect0.height + 10, (rect0, rect37)
+        assert rect37.width > rect0.width
+        assert not doc[1].get_images(full=True)
+
+
+def test_pdf_visual_shapes_rotation_validates_angle_and_preserves_text_limits():
+    data = make_pdf(page_sizes=((595, 842),))
+    shape = {
+        "type": "shape", "page": 1, "shape": "ellipse", "x_mm": 15,
+        "y_mm": 20, "width_mm": 30, "height_mm": 20, "rotation": 359,
+        "opacity": 1,
+    }
+    def post(item):
+        return client.post("/api/v1/pdf/apply-visual-edits",
+            files={"file": ("sample.pdf", data, "application/pdf")},
+            data={"elements_json": json.dumps([item])})
+    assert post(shape).status_code == 200
+    for angle in (-1, 360, 500):
+        assert post({**shape, "rotation": angle}).status_code == 422
+    text_element = {**shape, "type": "text", "text": "Test", "rotation": 37}
+    assert post(text_element).status_code == 422

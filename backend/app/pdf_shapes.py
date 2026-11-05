@@ -43,25 +43,29 @@ def render_pdf_shape(page: pymupdf.Page, rect: pymupdf.Rect, element: dict) -> N
     flip_x = bool(element.get("flip_x", False))
     flip_y = bool(element.get("flip_y", False))
     dashes = "[4 3] 0" if dashed else None
+    angle = _number(element.get("rotation", 0), "زاوية تدوير الشكل", 0, 359)
+    center = pymupdf.Point((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
+    morph = (center, pymupdf.Matrix(angle)) if angle else None
 
     def point(x: float, y: float) -> pymupdf.Point:
         return pymupdf.Point(rect.x0 + x * rect.width, rect.y0 + y * rect.height)
 
     if kind == "rectangle":
         page.draw_rect(rect, color=stroke, fill=fill if filled else None,
-                       width=width, dashes=dashes,
+                       width=width, dashes=dashes, morph=morph,
                        stroke_opacity=opacity, fill_opacity=opacity, overlay=True)
     elif kind == "ellipse":
         page.draw_oval(rect, color=stroke, fill=fill if filled else None,
-                      width=width, dashes=dashes,
+                      width=width, dashes=dashes, morph=morph,
                       stroke_opacity=opacity, fill_opacity=opacity, overlay=True)
     elif kind == "highlight":
-        page.draw_rect(rect, color=None, fill=fill, fill_opacity=opacity, overlay=True)
+        page.draw_rect(rect, color=None, fill=fill, fill_opacity=opacity,
+                       morph=morph, overlay=True)
     elif kind in {"line", "arrow"}:
         start = point(1 if flip_x else 0, 1 if flip_y else 0)
         end = point(0 if flip_x else 1, 0 if flip_y else 1)
         page.draw_line(start, end, color=stroke, width=width,
-                       dashes=dashes, stroke_opacity=opacity, overlay=True)
+                       dashes=dashes, morph=morph, stroke_opacity=opacity, overlay=True)
         if kind == "arrow":
             dx, dy = end.x - start.x, end.y - start.y
             length = math.hypot(dx, dy)
@@ -74,7 +78,7 @@ def render_pdf_shape(page: pymupdf.Page, rect: pymupdf.Rect, element: dict) -> N
                 right = pymupdf.Point(end.x - ux * arrow_length + uy * wing,
                                       end.y - uy * arrow_length - ux * wing)
                 page.draw_polyline([left, end, right], color=stroke, width=width,
-                                   stroke_opacity=opacity, overlay=True)
+                                   morph=morph, stroke_opacity=opacity, overlay=True)
     else:
         points = element.get("points")
         if not isinstance(points, list) or not (2 <= len(points) <= 1000):
@@ -87,4 +91,4 @@ def render_pdf_shape(page: pymupdf.Page, rect: pymupdf.Rect, element: dict) -> N
             y = _number(pair[1], "Y", 0, 1)
             normalized.append(point(x, y))
         page.draw_polyline(normalized, color=stroke, width=width,
-                           dashes=dashes, stroke_opacity=opacity, overlay=True)
+                           dashes=dashes, morph=morph, stroke_opacity=opacity, overlay=True)

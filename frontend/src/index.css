@@ -2393,3 +2393,68 @@ textarea::placeholder {
   .pdf-draft-actions { width: 100%; }
   .pdf-draft-actions .button { flex: 1 1 auto; }
 }
+
+
+/* PDF advanced editing: multi-selection and smart alignment */
+.pdf-multi-toolbar {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid #cbdce5;
+  border-radius: 12px;
+  background: #f6fafb;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.pdf-multi-toolbar > span {
+  font-size: 12px;
+  color: #24495e;
+  line-height: 1.5;
+}
+.pdf-multi-toolbar > span strong { color: #007c83; font-size: 15px; }
+.pdf-multi-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.pdf-multi-toolbar-actions .button {
+  min-height: 34px;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.pdf-canvas-element.grouped.selected {
+  outline: 1px dashed #0f7590;
+  outline-offset: 2px;
+}
+.pdf-snap-guide {
+  position: absolute;
+  z-index: 7;
+  pointer-events: none;
+  background: #ea4c6c;
+  opacity: 0.8;
+}
+.pdf-snap-guide.vertical { width: 1px; height: 100%; top: 0; }
+.pdf-snap-guide.horizontal { height: 1px; width: 100%; left: 0; }
+.pdf-rotation-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 8px 0 12px;
+}
+.pdf-rotation-presets button {
+  cursor: pointer;
+  background: white;
+  color: #1e526a;
+  border: 1px solid #b9d5dc;
+  border-radius: 7px;
+  min-height: 30px;
+  padding: 4px 10px;
+}
+.pdf-rotation-presets button:hover { background: #e7f3f6; }
+.pdf-rotation-presets button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 680px) {
+  .pdf-multi-toolbar { align-items: stretch; }
+  .pdf-multi-toolbar-actions { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
