@@ -1015,12 +1015,20 @@ export default function PdfVisualEditor({
       const edited = new File([blob], "MAGHRABI-visual-edited.pdf", {
         type: "application/pdf",
       });
-      await onApplied(edited);
+      // The editable project is already persisted. Stop autosaving before the
+      // parent replaces the source PDF, so resetting UI cannot erase this draft.
+      setDraftEnabled(false);
+      try {
+        await onApplied(edited);
+      } catch (error) {
+        setDraftEnabled(true);
+        throw error;
+      }
       setElements([]);
       setSelectedId("");
       setUndoStack([]);
       setRedoStack([]);
-      onNotice("تم تطبيق عناصر المحرر المرئي على PDF وتنزيل النسخة الجديدة.");
+      onNotice("تم تطبيق العناصر على PDF وحفظ نسخة المشروع القابلة للتعديل محليًا.");
     } catch (error) {
       onError(error instanceof Error ? error.message : "تعذر حفظ تعديلات المحرر المرئي.");
     } finally {
