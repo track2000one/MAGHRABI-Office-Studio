@@ -53,7 +53,12 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-export default function PdfStudio({ initialFile = null }: { initialFile?: File | null }) {
+export default function PdfStudio({
+  initialFile = null, onUnsavedChange,
+}: {
+  initialFile?: File | null;
+  onUnsavedChange?: (unsaved: boolean) => void;
+}) {
   const input = useRef<HTMLInputElement>(null);
   const mergeInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
@@ -105,6 +110,9 @@ export default function PdfStudio({ initialFile = null }: { initialFile?: File |
   const [savedPdfDrafts, setSavedPdfDrafts] = useState<PdfDraftSummary[]>([]);
   const [pdfDraftsError, setPdfDraftsError] = useState("");
   const [restoreDraftId, setRestoreDraftId] = useState<string | null>(null);
+
+  useEffect(() => { onUnsavedChange?.(pdfUnsaved); }, [pdfUnsaved, onUnsavedChange]);
+  useEffect(() => () => { onUnsavedChange?.(false); }, [onUnsavedChange]);
 
   const allPages = useMemo(
     () => (info ? `1-${info.pages}` : ""),
