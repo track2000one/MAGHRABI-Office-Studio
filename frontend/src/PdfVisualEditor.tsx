@@ -591,8 +591,15 @@ export default function PdfVisualEditor({
     end: ShapePoint,
     trail: ShapePoint[],
   ): ShapeElement {
-    const shape: PdfShapeKind = tool === "filled-rectangle" ? "rectangle" : tool;
-    const geometry = shapeGeometry(start, end, shape === "freehand" ? trail : []);
+    const shape: PdfShapeKind = ["square", "filled-square", "filled-rectangle"].includes(tool)
+      ? "rectangle" : tool === "circle" ? "ellipse" : tool as PdfShapeKind;
+    const constrained = ["square", "filled-square", "circle"].includes(tool);
+    const side = Math.min(Math.abs(end[0] - start[0]), Math.abs(end[1] - start[1]));
+    const snapped: ShapePoint = constrained ? [
+      start[0] + Math.sign(end[0] - start[0]) * side,
+      start[1] + Math.sign(end[1] - start[1]) * side,
+    ] : end;
+    const geometry = shapeGeometry(start, snapped, shape === "freehand" ? trail : []);
     return {
       id, type: "shape", shape, page,
       ...geometry,
@@ -600,7 +607,7 @@ export default function PdfVisualEditor({
       opacity: shape === "highlight" ? 0.35 : 1,
       strokeColor: "#1477ad",
       fillColor: shape === "highlight" ? "#ffe04a" : "#f5bd3c",
-      fillEnabled: shape === "highlight" || tool === "filled-rectangle",
+      fillEnabled: shape === "highlight" || tool === "filled-rectangle" || tool === "filled-square",
       strokeWidthPt: 2,
       dashed: false,
     };
@@ -654,6 +661,8 @@ export default function PdfVisualEditor({
       ? trail.reduce((sum, point, i) => i ? sum + Math.hypot(point[0] - trail[i - 1]![0], point[1] - trail[i - 1]![1]) : 0, 0)
       : Math.hypot(end[0] - drawing.start[0], end[1] - drawing.start[1]);
     if (distance < 2) return;
+    if (["square", "filled-square", "circle"].includes(drawing.tool) &&
+        Math.min(Math.abs(end[0] - drawing.start[0]), Math.abs(end[1] - drawing.start[1])) < 2) return;
     const next = makeShape(drawing.tool, drawing.id, drawing.start, end, trail);
     commit(current => [...current, next]);
     setSelectedId(next.id);
@@ -731,7 +740,7 @@ export default function PdfVisualEditor({
 
   async function saveVisualEdits() {
     if (!elements.length) {
-      onError("أضف نصًا أو صورة أو توقيعًا قبل الحفظ.");
+      onError("أضف نصًا أو صورة أو توقيعًا أو شكلًا مرسومًا قبل الحفظ.");
       return;
     }
     setSaving(true);
