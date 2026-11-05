@@ -1098,7 +1098,7 @@ export default function PdfVisualEditor({
             <div>
               <strong>حفظ مشروع PDF القابل للتحرير</strong>
               <p className="muted small">
-                {draftStatus === "saved" && draftSavedAt ? \`حُفظت المسودة على هذا المتصفح: \${new Date(draftSavedAt).toLocaleTimeString("ar-SA")}.\` :
+                {draftStatus === "saved" && draftSavedAt ? "حُفظت المسودة على هذا المتصفح: " + new Date(draftSavedAt).toLocaleTimeString("ar-SA") + "." :
                  draftStatus === "pending" ? "توجد تعديلات، جارٍ تجهيز الحفظ التلقائي…" :
                  draftStatus === "saving" ? "جارٍ حفظ المشروع والصور…" :
                  draftStatus === "error" ? "الحفظ التلقائي غير متاح حاليًا. يمكنك تصدير PDF النهائي." :
