@@ -7,6 +7,7 @@ import re
 
 import pymupdf
 from fastapi import HTTPException
+from .pdf_shapes import render_pdf_shape
 from PIL import Image, UnidentifiedImageError
 
 MM_TO_PT = 72 / 25.4
@@ -563,6 +564,12 @@ def apply_visual_edits(data: bytes, elements: list[dict], assets: list[bytes]) -
 
             page = doc[page_number - 1]
             target = _visual_rect(page, element)
+
+            if kind == "shape":
+                if rotation != 0:
+                    raise HTTPException(422, "تدوير الأشكال الهندسية غير مدعوم حاليًا.")
+                render_pdf_shape(page, target, element)
+                continue
 
             if kind in {"image", "signature"}:
                 try:
