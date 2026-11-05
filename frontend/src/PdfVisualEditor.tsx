@@ -8,6 +8,7 @@ import {
 import { api } from "./api";
 import {loadPdfThumbnails, PDF_THUMBNAIL_BATCH} from "./pdfThumbnails";
 import {PdfShapeGraphic, PDF_SHAPE_TOOLS, shapeGeometry, type PdfDrawingTool, type PdfShapeKind, type ShapePoint} from "./pdfShapes";
+import {alignSelection, snapSelectionMove, rotatedBounds, type Alignment} from "./pdfTransform";
 import {
   pdfDraftKey, readPdfDraft, removePdfDraft, writePdfDraft,
   type PdfDraftRecord,
@@ -40,7 +41,8 @@ type BaseElement = {
   yMm: number;
   widthMm: number;
   heightMm: number;
-  rotation: 0 | 90 | 180 | 270;
+  rotation: number;
+  groupId?: string;
   opacity: number;
   locked: boolean;
 };
@@ -151,6 +153,7 @@ export default function PdfVisualEditor({
   const dragRef = useRef<null | {
     mode: "move" | "resize";
     id: string;
+    ids: string[];
     startClientX: number;
     startClientY: number;
     startX: number;
@@ -170,6 +173,8 @@ export default function PdfVisualEditor({
   const [thumbUrls, setThumbUrls] = useState<Record<number, string>>({});
   const [elements, setElements] = useState<VisualElement[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [snapGuides, setSnapGuides] = useState<{x:number|null;y:number|null}>({x:null,y:null});
   const [assets, setAssets] = useState<Record<string, AssetEntry>>({});
   const [undoStack, setUndoStack] = useState<VisualElement[][]>([]);
   const [redoStack, setRedoStack] = useState<VisualElement[][]>([]);
@@ -191,6 +196,15 @@ export default function PdfVisualEditor({
     () => info.page_sizes.find((item) => item.page === page) ?? info.page_sizes[0]!,
     [info, page],
   );
+  const selectedPageElements = useMemo(
+    () => elements.filter(item => item.page === page && selectedIds.includes(item.id)),
+    [elements, selectedIds, page],
+  );
+  function selectOnly(id: string) {
+    setSelectedId(id);
+    setSelectedIds(id ? [id] : []);
+  }
+
   const selected = useMemo(
     () => elements.find((item) => item.id === selectedId) ?? null,
     [elements, selectedId],
@@ -215,7 +229,7 @@ export default function PdfVisualEditor({
   useEffect(() => {
     setPage(1);
     setElements([]);
-    setSelectedId("");
+    selectOnly("");
     setUndoStack([]);
     setRedoStack([]);
     setZoom(100);
@@ -276,6 +290,7 @@ export default function PdfVisualEditor({
       return restoredAssets;
     });
     setElements(restored);
+    setSelectedIds([]);
     setUndoStack([]);
     setRedoStack([]);
     setSelectedId("");
@@ -558,6 +573,7 @@ export default function PdfVisualEditor({
     setUndoStack((history) => history.slice(0, -1));
     setRedoStack((history) => [elements, ...history].slice(0, MAX_HISTORY));
     setElements(previous);
+    setSelectedIds(ids => ids.filter(id => previous.some(item => item.id === id)));
     setSelectedId((id) => (previous.some((item) => item.id === id) ? id : ""));
   }
 
@@ -567,6 +583,7 @@ export default function PdfVisualEditor({
     setRedoStack((history) => history.slice(1));
     setUndoStack((history) => [...history, elements].slice(-MAX_HISTORY));
     setElements(next);
+    setSelectedIds(ids => ids.filter(id => next.some(item => item.id === id)));
     setSelectedId((id) => (next.some((item) => item.id === id) ? id : ""));
   }
 
