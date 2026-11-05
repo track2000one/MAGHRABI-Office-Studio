@@ -262,7 +262,8 @@ export default function PdfVisualEditor({
       if (item.type === "shape")
         return typeof item.shape === "string" && typeof item.strokeColor === "string" &&
           Array.isArray(item.points);
-      return typeof item.text === "string";
+      if (item.type === "text") return typeof item.text === "string";
+      return false;
     });
     if (!valid)
       throw new Error("تعذر استعادة المشروع: توجد عناصر غير صالحة، ولم تتغير المسودة المحفوظة.");
