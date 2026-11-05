@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 
 export type PdfShapeKind = "rectangle" | "ellipse" | "line" | "arrow" | "highlight" | "freehand";
-export type PdfDrawingTool = "select" | PdfShapeKind | "filled-rectangle";
+export type PdfDrawingTool = "select" | PdfShapeKind | "filled-rectangle" | "square" | "filled-square" | "circle";
 export type ShapePoint = [number, number];
 export type ShapeGeometry = {
   xMm: number;
@@ -37,9 +37,12 @@ export function shapeGeometry(start: ShapePoint, end: ShapePoint, trail: ShapePo
 
 export const PDF_SHAPE_TOOLS: { tool: PdfDrawingTool; label: string; symbol: string }[] = [
   { tool: "select", label: "تحديد", symbol: "↖" },
+  { tool: "square", label: "مربع", symbol: "□" },
+  { tool: "filled-square", label: "مربع مظلل", symbol: "▣" },
   { tool: "rectangle", label: "مستطيل", symbol: "▭" },
-  { tool: "filled-rectangle", label: "مربع مظلل", symbol: "▣" },
-  { tool: "ellipse", label: "دائرة / بيضاوي", symbol: "◯" },
+  { tool: "filled-rectangle", label: "مستطيل مظلل", symbol: "▰" },
+  { tool: "circle", label: "دائرة", symbol: "◯" },
+  { tool: "ellipse", label: "شكل بيضاوي", symbol: "⬭" },
   { tool: "line", label: "خط", symbol: "╱" },
   { tool: "arrow", label: "سهم", symbol: "➜" },
   { tool: "highlight", label: "تمييز شفاف", symbol: "▰" },
