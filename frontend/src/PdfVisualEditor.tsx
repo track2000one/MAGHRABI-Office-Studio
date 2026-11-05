@@ -154,6 +154,7 @@ export default function PdfVisualEditor({
     mode: "move" | "resize";
     id: string;
     ids: string[];
+    changed: boolean;
     startClientX: number;
     startClientY: number;
     startX: number;
@@ -908,25 +909,39 @@ export default function PdfVisualEditor({
     mode: "move" | "resize",
   ) {
     const stage = stageRef.current;
-    if (saving || pendingDraft || !stage || !pageInfo) return;
+    if (saving || pendingDraft || drawMode !== "select" || !stage || !pageInfo) return;
     event.preventDefault();
     event.stopPropagation();
+    const groupIds = element.groupId
+      ? pageElements.filter(item => item.groupId === element.groupId).map(item => item.id)
+      : [element.id];
+
+    if (mode === "move" && (event.shiftKey || event.ctrlKey || event.metaKey)) {
+      const alreadyIncluded = groupIds.every(id => selectedIds.includes(id));
+      const nextIds = alreadyIncluded
+        ? selectedIds.filter(id => !groupIds.includes(id))
+        : Array.from(new Set([...selectedIds, ...groupIds]));
+      setSelectedIds(nextIds);
+      setSelectedId(nextIds[nextIds.length - 1] || "");
+      return;
+    }
+    const ids = mode === "move" && selectedIds.includes(element.id) && selectedIds.length > 1
+      ? selectedIds : groupIds;
+    if (ids.some(id => elements.find(item => item.id === id)?.locked)) {
+      setSelectedIds(ids);
+      setSelectedId(element.id);
+      return;
+    }
+    setSelectedIds(ids);
     setSelectedId(element.id);
-    if (element.locked) return;
     const bounds = stage.getBoundingClientRect();
     dragRef.current = {
-      mode,
-      id: element.id,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startX: element.xMm,
-      startY: element.yMm,
-      startWidth: element.widthMm,
-      startHeight: element.heightMm,
-      pageWidthMm: pageInfo.width_mm,
-      pageHeightMm: pageInfo.height_mm,
-      stageWidth: Math.max(bounds.width, 1),
-      stageHeight: Math.max(bounds.height, 1),
+      mode, id: element.id, ids, changed: false,
+      startClientX: event.clientX, startClientY: event.clientY,
+      startX: element.xMm, startY: element.yMm,
+      startWidth: element.widthMm, startHeight: element.heightMm,
+      pageWidthMm: pageInfo.width_mm, pageHeightMm: pageInfo.height_mm,
+      stageWidth: Math.max(bounds.width, 1), stageHeight: Math.max(bounds.height, 1),
       before: elements,
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -938,37 +953,48 @@ export default function PdfVisualEditor({
     event.preventDefault();
     const dxMm = ((event.clientX - drag.startClientX) / drag.stageWidth) * drag.pageWidthMm;
     const dyMm = ((event.clientY - drag.startClientY) / drag.stageHeight) * drag.pageHeightMm;
-    setElements((current) =>
-      current.map((item) => {
-        if (item.id !== drag.id) return item;
-        if (drag.mode === "move") {
-          return {
-            ...item,
-            xMm: clamp(drag.startX + dxMm, 0, Math.max(0, drag.pageWidthMm - item.widthMm)),
-            yMm: clamp(drag.startY + dyMm, 0, Math.max(0, drag.pageHeightMm - item.heightMm)),
-          };
-        }
-        let width = Math.max(5, drag.startWidth + dxMm);
-        let height = Math.max(5, drag.startHeight + dyMm);
-        if ((item.type === "image" || item.type === "signature") && item.keepAspect) {
-          const ratio = drag.startWidth / Math.max(drag.startHeight, 0.1);
-          if (Math.abs(dxMm) >= Math.abs(dyMm) * ratio) height = width / ratio;
-          else width = height * ratio;
-        }
-        width = Math.min(width, Math.max(5, drag.pageWidthMm - item.xMm));
-        height = Math.min(height, Math.max(5, drag.pageHeightMm - item.yMm));
-        return { ...item, widthMm: width, heightMm: height };
-      }),
-    );
+    const activeIds = new Set(drag.ids);
+    if (drag.mode === "move") {
+      const moving = drag.before.filter(item => activeIds.has(item.id));
+      const other = drag.before.filter(item => item.page === page && !activeIds.has(item.id));
+      const snapped = snapSelectionMove(
+        moving, other, pageInfo, dxMm, dyMm, event.altKey ? 0 : 2,
+      );
+      drag.changed = drag.changed || Math.abs(snapped.dx) > 0.01 || Math.abs(snapped.dy) > 0.01;
+      setSnapGuides({x: snapped.guideX, y: snapped.guideY});
+      setElements(drag.before.map(item => activeIds.has(item.id) ? {
+        ...item, xMm: Number((item.xMm + snapped.dx).toFixed(3)),
+        yMm: Number((item.yMm + snapped.dy).toFixed(3)),
+      } : item));
+      return;
+    }
+    drag.changed = drag.changed || Math.abs(dxMm) > 0.01 || Math.abs(dyMm) > 0.01;
+    setElements(drag.before.map(item => {
+      if (item.id !== drag.id) return item;
+      let width = Math.max(5, drag.startWidth + dxMm);
+      let height = Math.max(5, drag.startHeight + dyMm);
+      if ((item.type === "image" || item.type === "signature") && item.keepAspect) {
+        const ratio = drag.startWidth / Math.max(drag.startHeight, 0.1);
+        if (Math.abs(dxMm) >= Math.abs(dyMm) * ratio) height = width / ratio;
+        else width = height * ratio;
+      }
+      width = Math.min(width, Math.max(5, drag.pageWidthMm - item.xMm));
+      height = Math.min(height, Math.max(5, drag.pageHeightMm - item.yMm));
+      return {...item, widthMm: width, heightMm: height};
+    }));
   }
 
   function endDrag(event: ReactPointerEvent<HTMLElement>) {
     const drag = dragRef.current;
     if (!drag) return;
     dragRef.current = null;
-    setUndoStack((history) => [...history, drag.before].slice(-MAX_HISTORY));
-    setRedoStack([]);
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    setSnapGuides({x:null,y:null});
+    if (drag.changed) {
+      setUndoStack(history => [...history, drag.before].slice(-MAX_HISTORY));
+      setRedoStack([]);
+    }
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
   }
 
   async function closeEditor() {
