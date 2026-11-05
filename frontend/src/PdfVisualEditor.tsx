@@ -293,7 +293,7 @@ export default function PdfVisualEditor({
     setSelectedIds([]);
     setUndoStack([]);
     setRedoStack([]);
-    setSelectedId("");
+    selectOnly("");
     setPage(Math.min(Math.max(draft.page, 1), info.pages));
     setZoom(draft.zoom);
     setActive(true);
@@ -608,7 +608,7 @@ export default function PdfVisualEditor({
       rtl: true,
     };
     commit((current) => [...current, next]);
-    setSelectedId(id);
+    selectOnly(id);
   }
 
   function requestAsset(mode: "image" | "signature") {
@@ -654,7 +654,7 @@ export default function PdfVisualEditor({
   function deleteSelected() {
     if (saving || pendingDraft || !selectedId || selected?.locked) return;
     commit((current) => current.filter((item) => item.id !== selectedId));
-    setSelectedId("");
+    selectOnly("");
   }
 
   function updateSelected(patch: Partial<VisualElement>) {
@@ -694,7 +694,7 @@ export default function PdfVisualEditor({
     pasted.xMm = clamp(pasted.xMm + 5, 0, Math.max(0, targetInfo.width_mm - pasted.widthMm));
     pasted.yMm = clamp(pasted.yMm + 5, 0, Math.max(0, targetInfo.height_mm - pasted.heightMm));
     commit((current) => [...current, pasted]);
-    setSelectedId(pasted.id);
+    selectOnly(pasted.id);
     onNotice(`تم لصق العنصر في الصفحة ${page} كنسخة مستقلة.`);
   }
 
@@ -830,7 +830,7 @@ export default function PdfVisualEditor({
   function beginDraw(event: ReactPointerEvent<HTMLDivElement>) {
     if (saving || pendingDraft) return;
     if (drawMode === "select") {
-      setSelectedId("");
+      selectOnly("");
       return;
     }
     if (event.button !== 0) return;
@@ -839,7 +839,7 @@ export default function PdfVisualEditor({
     const id = makeId("shape", ++idCounter.current);
     drawRef.current = { tool: drawMode, start, trail: [start], id };
     setDraftShape(makeShape(drawMode, id, start, start, [start]));
-    setSelectedId("");
+    selectOnly("");
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
@@ -872,7 +872,7 @@ export default function PdfVisualEditor({
         Math.min(Math.abs(end[0] - drawing.start[0]), Math.abs(end[1] - drawing.start[1])) < 2) return;
     const next = makeShape(drawing.tool, drawing.id, drawing.start, end, trail);
     commit(current => [...current, next]);
-    setSelectedId(next.id);
+    selectOnly(next.id);
     setDrawMode("select");
   }
 
@@ -1042,7 +1042,7 @@ export default function PdfVisualEditor({
         throw error;
       }
       setElements([]);
-      setSelectedId("");
+      selectOnly("");
       setUndoStack([]);
       setRedoStack([]);
       onNotice("تم تطبيق العناصر على PDF وحفظ نسخة المشروع القابلة للتعديل محليًا.");
@@ -1171,7 +1171,7 @@ export default function PdfVisualEditor({
               className={pageNumber === page ? "pdf-thumb active" : "pdf-thumb"}
               onClick={() => {
                 setPage(pageNumber);
-                setSelectedId("");
+                selectOnly("");
               }}
             >
               {thumbUrls[pageNumber] ? (
