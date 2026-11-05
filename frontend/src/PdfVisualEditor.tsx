@@ -1632,7 +1632,7 @@ export default function PdfVisualEditor({
                 </div>
               )}
 
-              <button className="button danger full" onClick={deleteSelected} disabled={!selectedPageElements.some(item => !item.locked)}>حذف العناصر المحددة</button>
+              <button className="button danger full" onClick={deleteSelected} disabled={!selectedPageElements.some(item => !item.locked)}>{selectedIds.length > 1 ? "حذف العناصر المحددة" : "حذف العنصر"}</button>
             </>
           )}
         </aside>
