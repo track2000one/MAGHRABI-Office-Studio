@@ -4,8 +4,8 @@ import {PDF_SHAPE_TOOLS, shapeGeometry} from "../pdfShapes";
 describe("PDF vector drawing geometry", () => {
   it("includes selection and all requested drawing tools", () => {
     expect(PDF_SHAPE_TOOLS.map(item => item.tool)).toEqual([
-      "select", "rectangle", "filled-rectangle", "ellipse",
-      "line", "arrow", "highlight", "freehand",
+      "select", "square", "filled-square", "rectangle", "filled-rectangle",
+      "circle", "ellipse", "line", "arrow", "highlight", "freehand",
     ]);
   });
 
