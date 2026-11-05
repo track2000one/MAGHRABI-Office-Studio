@@ -1235,6 +1235,20 @@ export default function PdfVisualEditor({
         <p className="muted small">اختر أداة ثم اسحب داخل الصفحة لرسم الشكل. اضغط «تحديد» لتعديل الرسومات أو تحريكها.</p>
       </div>
 
+      <div className="pdf-multi-toolbar" role="toolbar" aria-label="التحديد المتعدد والتجميع">
+        <span><strong>{selectedIds.length}</strong> عنصر محدد · اضغط Shift أو Ctrl عند اختيار العناصر لإضافتها</span>
+        <div className="pdf-multi-toolbar-actions">
+          <button type="button" className="button outline" disabled={saving || !!pendingDraft || !pageElements.length}
+            onClick={selectAllOnPage}>تحديد الكل في الصفحة</button>
+          <button type="button" className="button outline" disabled={saving || !!pendingDraft || selectedPageElements.length < 2 || selectedPageElements.some(item => item.locked)}
+            onClick={groupSelection}>تجميع</button>
+          <button type="button" className="button outline" disabled={saving || !!pendingDraft || !selectedPageElements.some(item => !!item.groupId)}
+            onClick={ungroupSelection}>فك التجميع</button>
+          <button type="button" className="button outline" disabled={!selectedIds.length}
+            onClick={() => selectOnly("")}>إلغاء التحديد</button>
+        </div>
+      </div>
+
       <div className="pdf-visual-editor-layout">
         <aside className="pdf-thumbnails" aria-label="صفحات PDF">
           {Array.from({ length: info.pages }, (_, index) => index + 1).map((pageNumber) => (
@@ -1295,8 +1309,16 @@ export default function PdfVisualEditor({
                 </div>
               )}
 
+              {snapGuides.x !== null && (
+                <div className="pdf-snap-guide vertical" aria-hidden="true"
+                  style={{left: (snapGuides.x / pageInfo.width_mm * 100) + "%"}} />
+              )}
+              {snapGuides.y !== null && (
+                <div className="pdf-snap-guide horizontal" aria-hidden="true"
+                  style={{top: (snapGuides.y / pageInfo.height_mm * 100) + "%"}} />
+              )}
               {pageElements.map((element) => {
-                const selectedNow = element.id === selectedId;
+                const selectedNow = selectedIds.includes(element.id);
                 const commonStyle = {
                   left: `${(element.xMm / pageInfo.width_mm) * 100}%`,
                   top: `${(element.yMm / pageInfo.height_mm) * 100}%`,
@@ -1309,7 +1331,7 @@ export default function PdfVisualEditor({
                   <div
                     key={element.id}
                     data-testid={`visual-element-${element.type}`}
-                    className={`pdf-canvas-element ${selectedNow ? "selected" : ""} ${element.locked ? "locked" : ""}`}
+                    className={`pdf-canvas-element ${selectedNow ? "selected" : ""} ${element.locked ? "locked" : ""} ${element.groupId ? "grouped" : ""}`}
                     style={commonStyle}
                     onPointerDown={(event) => beginDrag(event, element, "move")}
                     onPointerMove={moveDrag}
@@ -1358,7 +1380,10 @@ export default function PdfVisualEditor({
         </div>
 
         <aside className="pdf-element-inspector">
-          <h4>خصائص العنصر</h4>
+          <h4>{selectedIds.length > 1 ? "خصائص العناصر المحددة" : "خصائص العنصر"}</h4>
+          {selectedIds.length > 1 && (
+            <p className="muted small">{selectedIds.length} عناصر محددة. المحاذاة تطبّق على المجموعة بأكملها، وتبقى خصائص العنصر الأخير منفصلة.</p>
+          )}
           {!selected && <p className="muted small">حدد نصًا أو صورة أو توقيعًا أو شكلًا هندسيًا من الصفحة لتعديل خصائصه.</p>}
           {selected && (
             <>
@@ -1479,6 +1504,19 @@ export default function PdfVisualEditor({
               {selected.type === "shape" && (
                 <div className="pdf-shape-inspector">
                   <strong>خصائص الرسم</strong>
+                  <label>زاوية تدوير الشكل (0–359°)
+                    <input type="number" aria-label="زاوية تدوير الشكل" min="0" max="359" step="1"
+                      disabled={selected.locked} value={selected.rotation}
+                      onChange={event => rotateSelectedShape(Number(event.target.value))} />
+                  </label>
+                  <input type="range" aria-label="تدوير الشكل بحرية" min="0" max="359" step="1"
+                    disabled={selected.locked} value={selected.rotation}
+                    onChange={event => rotateSelectedShape(Number(event.target.value))} />
+                  <div className="pdf-rotation-presets">
+                    <button type="button" disabled={selected.locked} onClick={() => rotateSelectedShape(0)}>0°</button>
+                    <button type="button" disabled={selected.locked} onClick={() => rotateSelectedShape((selected.rotation + 15) % 360)}>+15°</button>
+                    <button type="button" disabled={selected.locked} onClick={() => rotateSelectedShape((selected.rotation + 90) % 360)}>+90°</button>
+                  </div>
                   <div className="two-fields">
                     <label>لون الحدود
                       <input aria-label="لون حدود الشكل" type="color" value={selected.strokeColor} disabled={selected.locked || selected.shape === "highlight"} onChange={event => updateSelected({strokeColor: event.target.value} as Partial<VisualElement>)} />
