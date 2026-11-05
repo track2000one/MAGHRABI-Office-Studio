@@ -401,3 +401,60 @@ def test_pdf_thumbnail_batch_single_document_open(monkeypatch):
     assert response.status_code==200
     assert len(response.json()["pages"])==8
     assert calls==[len(data)]
+
+
+def test_pdf_visual_editor_draws_shapes_as_vectors_on_the_correct_page():
+    source = make_pdf(page_sizes=((595, 842), (595, 842)))
+    elements = [
+        {"type": "shape", "shape": "rectangle", "page": 2, "x_mm": 20,
+         "y_mm": 25, "width_mm": 75, "height_mm": 45, "rotation": 0,
+         "opacity": 0.75, "stroke_color": "#146eb0", "fill_color": "#ffce55",
+         "fill_enabled": True, "stroke_width_pt": 2},
+        {"type": "shape", "shape": "ellipse", "page": 2, "x_mm": 100,
+         "y_mm": 25, "width_mm": 35, "height_mm": 35, "rotation": 0,
+         "opacity": 1, "fill_enabled": False},
+        {"type": "shape", "shape": "arrow", "page": 2, "x_mm": 40,
+         "y_mm": 110, "width_mm": 75, "height_mm": 25, "rotation": 0,
+         "opacity": 1, "flip_x": True, "flip_y": False},
+        {"type": "shape", "shape": "highlight", "page": 2, "x_mm": 20,
+         "y_mm": 165, "width_mm": 90, "height_mm": 10, "rotation": 0,
+         "opacity": 0.35, "fill_color": "#ffe04a"},
+        {"type": "shape", "shape": "freehand", "page": 2, "x_mm": 25,
+         "y_mm": 190, "width_mm": 100, "height_mm": 20, "rotation": 0,
+         "opacity": 1, "points": [[0, 0], [0.25, 0.7], [0.6, 0.3], [1, 1]]},
+    ]
+    response = client.post(
+        "/api/v1/pdf/apply-visual-edits",
+        files={"file": ("building-plan.pdf", source, "application/pdf")},
+        data={"elements_json": json.dumps(elements)},
+    )
+    assert response.status_code == 200, response.text
+    with pymupdf.open(stream=response.content, filetype="pdf") as edited:
+        assert edited.page_count == 2
+        assert edited[0].get_drawings() == []
+        assert len(edited[1].get_drawings()) >= 5
+        assert edited[1].get_images(full=True) == []
+
+
+def test_pdf_visual_editor_rejects_malformed_shapes_and_paths():
+    source = make_pdf(page_sizes=((595, 842),))
+    base = {"type": "shape", "shape": "freehand", "page": 1,
+            "x_mm": 20, "y_mm": 30, "width_mm": 60, "height_mm": 30,
+            "rotation": 0, "opacity": 1,
+            "points": [[0, 0], [1, 1]]}
+    invalid = [
+        {"shape": "unknown"},
+        {"shape": "freehand", "points": [[0, 0], [1.1, 0.5]]},
+        {"shape": "freehand", "points": [[0, 0]]},
+        {"shape": "rectangle", "stroke_color": "url(evil)"},
+        {"shape": "rectangle", "stroke_width_pt": 100},
+        {"shape": "rectangle", "rotation": 90},
+        {"shape": "rectangle", "opacity": "NaN"},
+    ]
+    for changes in invalid:
+        response = client.post(
+            "/api/v1/pdf/apply-visual-edits",
+            files={"file": ("building-plan.pdf", source, "application/pdf")},
+            data={"elements_json": json.dumps([{**base, **changes}])},
+        )
+        assert response.status_code == 422, (changes, response.text)
