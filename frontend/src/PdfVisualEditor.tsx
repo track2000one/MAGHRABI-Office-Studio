@@ -1161,7 +1161,7 @@ export default function PdfVisualEditor({
           <button className="button outline" onClick={redo} disabled={!redoStack.length || saving} title="إعادة Ctrl+Y">↷</button>
           <button className="button outline" onClick={copySelectedToClipboard} disabled={!selectedId || saving}>نسخ</button>
           <button className="button outline" onClick={pasteClipboard} disabled={saving}>لصق</button>
-          <button className="button danger" onClick={deleteSelected} disabled={!selectedId || !!selected?.locked || saving}>حذف</button>
+          <button className="button danger" onClick={deleteSelected} disabled={!selectedPageElements.some(item => !item.locked) || saving}>حذف</button>
           <input
             ref={assetInput}
             type="file"
@@ -1361,7 +1361,7 @@ export default function PdfVisualEditor({
                         style={{ objectFit: element.keepAspect ? "contain" : "fill" }}
                       />
                     )}
-                    {selectedNow && !element.locked && (
+                    {selectedNow && !element.locked && selectedIds.length === 1 && (
                       <button
                         type="button"
                         className="pdf-resize-handle"
@@ -1632,7 +1632,7 @@ export default function PdfVisualEditor({
                 </div>
               )}
 
-              <button className="button danger full" onClick={deleteSelected} disabled={selected.locked}>حذف العنصر</button>
+              <button className="button danger full" onClick={deleteSelected} disabled={!selectedPageElements.some(item => !item.locked)}>حذف العناصر المحددة</button>
             </>
           )}
         </aside>
