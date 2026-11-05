@@ -78,7 +78,7 @@ def render_pdf_shape(page: pymupdf.Page, rect: pymupdf.Rect, element: dict) -> N
                 right = pymupdf.Point(end.x - ux * arrow_length + uy * wing,
                                       end.y - uy * arrow_length - ux * wing)
                 page.draw_polyline([left, end, right], color=stroke, width=width,
-                                   stroke_opacity=opacity, overlay=True)
+                                   morph=morph, stroke_opacity=opacity, overlay=True)
     else:
         points = element.get("points")
         if not isinstance(points, list) or not (2 <= len(points) <= 1000):
