@@ -704,7 +704,7 @@ export default function PdfVisualEditor({
 
   function copySelectedToClipboard() {
     if (!selected) return;
-    clipboardRef.current = { ...selected };
+    clipboardRef.current = { ...selected, groupId: undefined };
     onNotice("تم نسخ العنصر. استخدم لصق أو Ctrl+V لإضافته إلى الصفحة الحالية.");
   }
 
@@ -718,6 +718,7 @@ export default function PdfVisualEditor({
       info.page_sizes.find((item) => item.page === page) ?? info.page_sizes[0]!;
     const pasted = cloneElementToPage(source, page);
     pasted.locked = false;
+    pasted.groupId = undefined;
     pasted.xMm = clamp(pasted.xMm + 5, 0, Math.max(0, targetInfo.width_mm - pasted.widthMm));
     pasted.yMm = clamp(pasted.yMm + 5, 0, Math.max(0, targetInfo.height_mm - pasted.heightMm));
     commit((current) => [...current, pasted]);
@@ -767,6 +768,24 @@ export default function PdfVisualEditor({
     ));
   }
 
+  function rotateSelectedShape(degrees: number) {
+    if (!selected || selected.type !== "shape" || selected.locked) return;
+    const rotation = Math.min(359, Math.max(0, Math.round(degrees)));
+    if (!Number.isFinite(rotation)) return;
+    const box = rotatedBounds({...selected, rotation});
+    if (box.right - box.left > pageInfo.width_mm || box.bottom - box.top > pageInfo.height_mm) {
+      onError("الشكل بعد تدويره أكبر من مساحة الصفحة. صغّر حجمه أولًا.");
+      return;
+    }
+    const dx = box.left < 0 ? -box.left : box.right > pageInfo.width_mm ? pageInfo.width_mm - box.right : 0;
+    const dy = box.top < 0 ? -box.top : box.bottom > pageInfo.height_mm ? pageInfo.height_mm - box.bottom : 0;
+    updateSelected({
+      rotation,
+      xMm: Number((selected.xMm + dx).toFixed(3)),
+      yMm: Number((selected.yMm + dy).toFixed(3)),
+    } as Partial<VisualElement>);
+  }
+
   function cloneElementToPage(element: VisualElement, targetPage: number): VisualElement {
     const targetInfo =
       info.page_sizes.find((item) => item.page === targetPage) ?? info.page_sizes[0]!;
@@ -775,6 +794,7 @@ export default function PdfVisualEditor({
     return {
       ...element,
       id: makeId(element.type, ++idCounter.current),
+      groupId: undefined,
       page: targetPage,
       widthMm,
       heightMm,
