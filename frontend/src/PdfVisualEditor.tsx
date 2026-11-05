@@ -648,7 +648,7 @@ export default function PdfVisualEditor({
       keepAspect: true,
     };
     commit((current) => [...current, next]);
-    setSelectedId(id);
+    selectOnly(id);
     onNotice(mode === "signature" ? "تمت إضافة التوقيع إلى مساحة العمل." : "تمت إضافة الصورة إلى مساحة العمل.");
   }
 
