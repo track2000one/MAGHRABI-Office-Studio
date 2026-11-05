@@ -8,6 +8,10 @@ import {
 import { api } from "./api";
 import {loadPdfThumbnails, PDF_THUMBNAIL_BATCH} from "./pdfThumbnails";
 import {PdfShapeGraphic, PDF_SHAPE_TOOLS, shapeGeometry, type PdfDrawingTool, type PdfShapeKind, type ShapePoint} from "./pdfShapes";
+import {
+  pdfDraftKey, readPdfDraft, removePdfDraft, writePdfDraft,
+  type PdfDraftRecord,
+} from "./pdfDraftStore";
 
 type PageInfo = {
   page: number;
@@ -79,6 +83,8 @@ type Props = {
   onApplied: (file: File) => Promise<void>;
   onError: (message: string) => void;
   onNotice: (message: string) => void;
+  restoreDraftId?: string | null;
+  onUnsavedChange?: (unsaved: boolean) => void;
 };
 
 const MAX_HISTORY = 50;
@@ -121,6 +127,8 @@ export default function PdfVisualEditor({
   onApplied,
   onError,
   onNotice,
+  restoreDraftId = null,
+  onUnsavedChange,
 }: Props) {
   const assetInput = useRef<HTMLInputElement>(null);
   const assetMode = useRef<"image" | "signature">("image");
@@ -131,6 +139,9 @@ export default function PdfVisualEditor({
   const pagePreviewCacheRef = useRef(new Map<number,string>());
   const thumbUrlsRef = useRef<Record<number, string>>({});
   const clipboardRef = useRef<VisualElement | null>(null);
+  const draftRevision = useRef(0);
+  const draftWriteQueue = useRef<Promise<void>>(Promise.resolve());
+  const hadSavedDraft = useRef(false);
   const drawRef = useRef<null | {
     tool: Exclude<PdfDrawingTool, "select">;
     start: ShapePoint;
@@ -169,6 +180,12 @@ export default function PdfVisualEditor({
   const [saving, setSaving] = useState(false);
   const [copyScope, setCopyScope] = useState<"next" | "selected" | "all">("next");
   const [copyPages, setCopyPages] = useState("");
+  const [draftKey, setDraftKey] = useState("");
+  const [draftEnabled, setDraftEnabled] = useState(false);
+  const [pendingDraft, setPendingDraft] = useState<PdfDraftRecord | null>(null);
+  const [draftStatus, setDraftStatus] = useState<"idle" | "pending" | "saving" | "saved" | "error">("idle");
+  const [draftMessage, setDraftMessage] = useState("");
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
 
   const pageInfo = useMemo(
     () => info.page_sizes.find((item) => item.page === page) ?? info.page_sizes[0]!,
@@ -211,6 +228,14 @@ export default function PdfVisualEditor({
     setPageUrl("");
     setCopyScope("next");
     setCopyPages("");
+    setDraftEnabled(false);
+    setDraftKey("");
+    setPendingDraft(null);
+    setDraftStatus("idle");
+    setDraftMessage("");
+    setDraftSavedAt(null);
+    hadSavedDraft.current = false;
+    draftRevision.current++;
     clipboardRef.current = null;
     setThumbUrls((old) => {
       Object.values(old).forEach((url) => URL.revokeObjectURL(url));
@@ -221,6 +246,169 @@ export default function PdfVisualEditor({
       return {};
     });
   }, [file]);
+
+  function restoreSavedDraft(draft: PdfDraftRecord) {
+    const restored = draft.elements as VisualElement[];
+    const assetIds = new Set(draft.assets.map(item => item.id));
+    const valid = restored.every(item => {
+      if (!item || typeof item !== "object" ||
+          typeof item.id !== "string" ||
+          !["text", "image", "signature", "shape"].includes(item.type) ||
+          !Number.isInteger(item.page) || item.page < 1 || item.page > info.pages ||
+          ![item.xMm, item.yMm, item.widthMm, item.heightMm, item.opacity].every(Number.isFinite) ||
+          item.widthMm <= 0 || item.heightMm <= 0) return false;
+      if (item.type === "image" || item.type === "signature")
+        return typeof item.assetId === "string" && assetIds.has(item.assetId);
+      if (item.type === "shape")
+        return typeof item.shape === "string" && typeof item.strokeColor === "string" &&
+          Array.isArray(item.points);
+      if (item.type === "text") return typeof item.text === "string";
+      return false;
+    });
+    if (!valid)
+      throw new Error("تعذر استعادة المشروع: توجد عناصر غير صالحة، ولم تتغير المسودة المحفوظة.");
+
+    const restoredAssets: Record<string, AssetEntry> = {};
+    for (const asset of draft.assets)
+      restoredAssets[asset.id] = { file: asset.file, url: URL.createObjectURL(asset.file) };
+    setAssets(current => {
+      Object.values(current).forEach(entry => URL.revokeObjectURL(entry.url));
+      return restoredAssets;
+    });
+    setElements(restored);
+    setUndoStack([]);
+    setRedoStack([]);
+    setSelectedId("");
+    setPage(Math.min(Math.max(draft.page, 1), info.pages));
+    setZoom(draft.zoom);
+    setActive(true);
+    setPendingDraft(null);
+    setDraftEnabled(true);
+    setDraftStatus("saved");
+    setDraftMessage("");
+    setDraftSavedAt(draft.updatedAt);
+    hadSavedDraft.current = true;
+    onNotice("تم استعادة مشروع PDF ورسوماته وصوره للتعديل.");
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const restore = async () => {
+      setDraftEnabled(false);
+      setPendingDraft(null);
+      try {
+        const key = await pdfDraftKey(file);
+        const saved = await readPdfDraft(key);
+        if (cancelled) return;
+        setDraftKey(key);
+        if (!saved) {
+          setDraftEnabled(true);
+          return;
+        }
+        hadSavedDraft.current = true;
+        if (restoreDraftId === key) restoreSavedDraft(saved);
+        else setPendingDraft(saved);
+      } catch (error) {
+        if (!cancelled) {
+          setDraftStatus("error");
+          setDraftMessage(error instanceof Error ? error.message : "تعذر الوصول إلى مشاريع PDF.");
+        }
+      }
+    };
+    void restore();
+    return () => { cancelled = true; };
+  }, [file, restoreDraftId]);
+
+  function snapshotDraft(): PdfDraftRecord {
+    const attached = new Set(
+      elements.filter((item): item is AssetElement =>
+        item.type === "image" || item.type === "signature").map(item => item.assetId),
+    );
+    return {
+      version: 1, id: draftKey, title: file.name.slice(0, 180),
+      updatedAt: Date.now(), source: file,
+      elements,
+      assets: Object.entries(assets).filter(([id]) => attached.has(id))
+        .map(([id, entry]) => ({ id, file: entry.file })),
+      page, zoom,
+    };
+  }
+
+  async function persistDraft(revision: number): Promise<boolean> {
+    if (revision !== draftRevision.current || !draftEnabled || !draftKey) return false;
+    const snapshot = snapshotDraft();
+    setDraftStatus("saving");
+    const write = draftWriteQueue.current.catch(() => undefined)
+      .then(() => writePdfDraft(snapshot));
+    draftWriteQueue.current = write;
+    try {
+      await write;
+      if (revision === draftRevision.current) {
+        hadSavedDraft.current = true;
+        setDraftSavedAt(snapshot.updatedAt);
+        setDraftMessage("");
+        setDraftStatus("saved");
+      }
+      return revision === draftRevision.current;
+    } catch (error) {
+      if (revision === draftRevision.current) {
+        setDraftStatus("error");
+        setDraftMessage(error instanceof Error ? error.message :
+          "تعذر حفظ المسودة. تحقّق من مساحة المتصفح.");
+      }
+      return false;
+    }
+  }
+
+  useEffect(() => {
+    if (!draftEnabled || !draftKey || (!elements.length && !hadSavedDraft.current)) return;
+    const revision = ++draftRevision.current;
+    setDraftStatus("pending");
+    const timer = window.setTimeout(() => { void persistDraft(revision); }, 850);
+    return () => window.clearTimeout(timer);
+  }, [file, draftEnabled, draftKey, elements, assets, page, zoom]);
+
+  useEffect(() => {
+    const unsaved = !!elements.length && (
+      draftStatus === "pending" || draftStatus === "saving" ||
+      draftStatus === "error" || !draftEnabled
+    );
+    onUnsavedChange?.(unsaved);
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (unsaved) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden" &&
+          draftEnabled && draftKey && unsaved)
+        void persistDraft(++draftRevision.current);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnload);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [elements, draftStatus, draftEnabled, draftKey, onUnsavedChange]);
+
+  async function discardSavedDraft() {
+    if (!pendingDraft || !window.confirm("سيُحذف المشروع المحفوظ نهائيًا من هذا المتصفح. هل تريد البدء من جديد؟"))
+      return;
+    try {
+      await removePdfDraft(pendingDraft.id);
+      setPendingDraft(null);
+      hadSavedDraft.current = false;
+      setDraftEnabled(true);
+      setDraftStatus("idle");
+      setDraftSavedAt(null);
+      setDraftMessage("");
+      onNotice("تم بدء مشروع جديد، ولن تُستعاد المسودة القديمة.");
+    } catch (error) {
+      setDraftMessage(error instanceof Error ? error.message : "تعذر حذف المشروع السابق.");
+    }
+  }
 
   useEffect(() => {
     if (!active) return;
@@ -299,6 +487,7 @@ export default function PdfVisualEditor({
   useEffect(() => {
     if (!active) return;
     const onKey = (event: KeyboardEvent) => {
+      if (saving || pendingDraft) return;
       const target = event.target as HTMLElement | null;
       const typing =
         target?.tagName === "INPUT" ||
@@ -343,7 +532,7 @@ export default function PdfVisualEditor({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, selectedId, elements, undoStack, redoStack, page]);
+  }, [active, selectedId, elements, undoStack, redoStack, page, saving, pendingDraft]);
 
   useEffect(() => {
     return () => {
@@ -446,13 +635,13 @@ export default function PdfVisualEditor({
   }
 
   function deleteSelected() {
-    if (!selectedId || selected?.locked) return;
+    if (saving || pendingDraft || !selectedId || selected?.locked) return;
     commit((current) => current.filter((item) => item.id !== selectedId));
     setSelectedId("");
   }
 
   function updateSelected(patch: Partial<VisualElement>) {
-    if (!selectedId || selected?.locked) return;
+    if (saving || pendingDraft || !selectedId || selected?.locked) return;
     commit((current) =>
       current.map((item) =>
         item.id === selectedId ? ({ ...item, ...patch } as VisualElement) : item,
@@ -622,6 +811,7 @@ export default function PdfVisualEditor({
   }
 
   function beginDraw(event: ReactPointerEvent<HTMLDivElement>) {
+    if (saving || pendingDraft) return;
     if (drawMode === "select") {
       setSelectedId("");
       return;
@@ -675,7 +865,7 @@ export default function PdfVisualEditor({
     mode: "move" | "resize",
   ) {
     const stage = stageRef.current;
-    if (!stage || !pageInfo) return;
+    if (saving || pendingDraft || !stage || !pageInfo) return;
     event.preventDefault();
     event.stopPropagation();
     setSelectedId(element.id);
@@ -738,6 +928,16 @@ export default function PdfVisualEditor({
     event.currentTarget.releasePointerCapture?.(event.pointerId);
   }
 
+  async function closeEditor() {
+    if (elements.length && draftStatus !== "saved") {
+      const saved = draftEnabled && draftKey
+        ? await persistDraft(++draftRevision.current) : false;
+      if (!saved && !window.confirm("التعديلات غير محفوظة كمسودة. هل تريد إغلاق المحرر رغم ذلك؟"))
+        return;
+    }
+    setActive(false);
+  }
+
   async function saveVisualEdits() {
     if (!elements.length) {
       onError("أضف نصًا أو صورة أو توقيعًا أو شكلًا مرسومًا قبل الحفظ.");
@@ -745,6 +945,8 @@ export default function PdfVisualEditor({
     }
     setSaving(true);
     try {
+      // Preserve editable source elements before flattening them into the PDF.
+      if (draftEnabled && draftKey) await persistDraft(++draftRevision.current);
       const usedAssetIds = Array.from(
         new Set(
           elements
@@ -813,12 +1015,20 @@ export default function PdfVisualEditor({
       const edited = new File([blob], "MAGHRABI-visual-edited.pdf", {
         type: "application/pdf",
       });
-      await onApplied(edited);
+      // The editable project is already persisted. Stop autosaving before the
+      // parent replaces the source PDF, so resetting UI cannot erase this draft.
+      setDraftEnabled(false);
+      try {
+        await onApplied(edited);
+      } catch (error) {
+        setDraftEnabled(true);
+        throw error;
+      }
       setElements([]);
       setSelectedId("");
       setUndoStack([]);
       setRedoStack([]);
-      onNotice("تم تطبيق عناصر المحرر المرئي على PDF وتنزيل النسخة الجديدة.");
+      onNotice("تم تطبيق العناصر على PDF وحفظ نسخة المشروع القابلة للتعديل محليًا.");
     } catch (error) {
       onError(error instanceof Error ? error.message : "تعذر حفظ تعديلات المحرر المرئي.");
     } finally {
@@ -854,10 +1064,10 @@ export default function PdfVisualEditor({
           </p>
         </div>
         <div className="pdf-visual-toolbar" role="toolbar" aria-label="أدوات المحرر المرئي">
-          <button className="button outline" onClick={() => setActive(false)} disabled={saving}>إغلاق</button>
-          <button className="button outline" onClick={addText} disabled={saving}>＋ نص</button>
-          <button className="button outline" onClick={() => requestAsset("image")} disabled={saving}>＋ صورة</button>
-          <button className="button outline" onClick={() => requestAsset("signature")} disabled={saving}>＋ توقيع</button>
+          <button className="button outline" onClick={() => void closeEditor()} disabled={saving}>إغلاق</button>
+          <button className="button outline" onClick={addText} disabled={saving || !!pendingDraft}>＋ نص</button>
+          <button className="button outline" onClick={() => requestAsset("image")} disabled={saving || !!pendingDraft}>＋ صورة</button>
+          <button className="button outline" onClick={() => requestAsset("signature")} disabled={saving || !!pendingDraft}>＋ توقيع</button>
           <button className="button outline" onClick={undo} disabled={!undoStack.length || saving} title="تراجع Ctrl+Z">↶</button>
           <button className="button outline" onClick={redo} disabled={!redoStack.length || saving} title="إعادة Ctrl+Y">↷</button>
           <button className="button outline" onClick={copySelectedToClipboard} disabled={!selectedId || saving}>نسخ</button>
@@ -876,6 +1086,45 @@ export default function PdfVisualEditor({
         </div>
       </div>
 
+      <div className="pdf-draft-status" role="status" aria-live="polite">
+        {pendingDraft ? (
+          <>
+            <div>
+              <strong>توجد مسودة محفوظة لهذا المستند</strong>
+              <p className="muted small">
+                {pendingDraft.elements.length} عنصرًا · آخر حفظ {new Date(pendingDraft.updatedAt).toLocaleString("ar-SA")}.
+                يمكنك استعادة العناصر والصور القابلة للتحرير.
+              </p>
+            </div>
+            <div className="pdf-draft-actions">
+              <button className="button primary" onClick={() => {
+                try { restoreSavedDraft(pendingDraft); }
+                catch (error) { setDraftMessage(error instanceof Error ? error.message : "تعذرت استعادة المشروع."); }
+              }}>استعادة المسودة</button>
+              <button className="button outline" onClick={() => void discardSavedDraft()}>بدء مشروع جديد وحذف المسودة</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <strong>حفظ مشروع PDF القابل للتحرير</strong>
+              <p className="muted small">
+                {draftStatus === "saved" && draftSavedAt ? "حُفظت المسودة على هذا المتصفح: " + new Date(draftSavedAt).toLocaleTimeString("ar-SA") + "." :
+                 draftStatus === "pending" ? "توجد تعديلات، جارٍ تجهيز الحفظ التلقائي…" :
+                 draftStatus === "saving" ? "جارٍ حفظ المشروع والصور…" :
+                 draftStatus === "error" ? "الحفظ التلقائي غير متاح حاليًا. يمكنك تصدير PDF النهائي." :
+                 "تُحفظ عناصر الرسم والصور تلقائيًا بعد التعديل، ويمكن فتحها لاحقًا من مكتبة PDF."}
+              </p>
+              {draftMessage && <p className="pdf-draft-error">{draftMessage}</p>}
+            </div>
+            <button className="button outline" disabled={!draftEnabled || !draftKey || !elements.length}
+              onClick={() => { void persistDraft(++draftRevision.current); }}>
+              حفظ المشروع الآن
+            </button>
+          </>
+        )}
+      </div>
+
       <div className="pdf-shape-toolbar" role="toolbar" aria-label="أدوات الرسم والأشكال">
         <strong>أدوات الرسم</strong>
         <div className="pdf-shape-tool-list">
@@ -887,7 +1136,7 @@ export default function PdfVisualEditor({
               aria-pressed={drawMode === tool}
               title={label}
               onClick={() => { setDrawMode(tool); setDraftShape(null); drawRef.current = null; }}
-              disabled={saving}
+              disabled={saving || !!pendingDraft}
             >
               <span aria-hidden="true">{symbol}</span>
               {label}
