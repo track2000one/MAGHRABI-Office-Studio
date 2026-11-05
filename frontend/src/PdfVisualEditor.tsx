@@ -652,9 +652,35 @@ export default function PdfVisualEditor({
   }
 
   function deleteSelected() {
-    if (saving || pendingDraft || !selectedId || selected?.locked) return;
-    commit((current) => current.filter((item) => item.id !== selectedId));
+    if (saving || pendingDraft || !selectedIds.length) return;
+    const removable = new Set(selectedPageElements.filter(item => !item.locked).map(item => item.id));
+    if (!removable.size) return;
+    commit(current => current.filter(item => !removable.has(item.id)));
     selectOnly("");
+  }
+
+  function selectAllOnPage() {
+    const ids = pageElements.filter(item => !item.locked).map(item => item.id);
+    setSelectedIds(ids);
+    setSelectedId(ids[ids.length - 1] || "");
+  }
+
+  function groupSelection() {
+    if (selectedPageElements.length < 2 || selectedPageElements.some(item => item.locked)) return;
+    const groupId = makeId("group", ++idCounter.current);
+    const ids = new Set(selectedPageElements.map(item => item.id));
+    commit(current => current.map(item => ids.has(item.id) ? {...item, groupId} : item));
+    onNotice("تم تجميع العناصر المحددة. يمكن تحريك المجموعة معًا وفك التجميع لاحقًا.");
+  }
+
+  function ungroupSelection() {
+    const groupIds = new Set(selectedPageElements.map(item => item.groupId).filter((x): x is string => !!x));
+    if (!groupIds.size || selectedPageElements.some(item => item.locked)) return;
+    commit(current => current.map(item =>
+      item.page === page && item.groupId && groupIds.has(item.groupId)
+        ? {...item, groupId: undefined} : item
+    ));
+    onNotice("تم فك التجميع مع بقاء كل عنصر مستقلاً في مكانه.");
   }
 
   function updateSelected(patch: Partial<VisualElement>) {
@@ -726,18 +752,18 @@ export default function PdfVisualEditor({
     });
   }
 
-  function alignSelected(
-    alignment: "left" | "center-x" | "right" | "top" | "center-y" | "bottom",
-  ) {
-    if (!selected || selected.locked) return;
-    const patch: Partial<VisualElement> = {};
-    if (alignment === "left") patch.xMm = 0;
-    if (alignment === "center-x") patch.xMm = Math.max(0, (pageInfo.width_mm - selected.widthMm) / 2);
-    if (alignment === "right") patch.xMm = Math.max(0, pageInfo.width_mm - selected.widthMm);
-    if (alignment === "top") patch.yMm = 0;
-    if (alignment === "center-y") patch.yMm = Math.max(0, (pageInfo.height_mm - selected.heightMm) / 2);
-    if (alignment === "bottom") patch.yMm = Math.max(0, pageInfo.height_mm - selected.heightMm);
-    updateSelected(patch);
+  function alignSelected(alignment: Alignment) {
+    if (!selectedPageElements.length || selectedPageElements.some(item => item.locked)) return;
+    const move = alignSelection(selectedPageElements, pageInfo, alignment);
+    if (Math.abs(move.dx) < 0.0001 && Math.abs(move.dy) < 0.0001) return;
+    const ids = new Set(selectedPageElements.map(item => item.id));
+    commit(current => current.map(item =>
+      ids.has(item.id) ? {
+        ...item,
+        xMm: Number((item.xMm + move.dx).toFixed(3)),
+        yMm: Number((item.yMm + move.dy).toFixed(3)),
+      } : item,
+    ));
   }
 
   function cloneElementToPage(element: VisualElement, targetPage: number): VisualElement {
