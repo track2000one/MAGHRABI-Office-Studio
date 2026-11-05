@@ -348,7 +348,7 @@ export default function PdfVisualEditor({
         setDraftMessage("");
         setDraftStatus("saved");
       }
-      return true;
+      return revision === draftRevision.current;
     } catch (error) {
       if (revision === draftRevision.current) {
         setDraftStatus("error");
@@ -486,6 +486,7 @@ export default function PdfVisualEditor({
   useEffect(() => {
     if (!active) return;
     const onKey = (event: KeyboardEvent) => {
+      if (saving || pendingDraft) return;
       const target = event.target as HTMLElement | null;
       const typing =
         target?.tagName === "INPUT" ||
@@ -530,7 +531,7 @@ export default function PdfVisualEditor({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, selectedId, elements, undoStack, redoStack, page]);
+  }, [active, selectedId, elements, undoStack, redoStack, page, saving, pendingDraft]);
 
   useEffect(() => {
     return () => {
@@ -633,13 +634,13 @@ export default function PdfVisualEditor({
   }
 
   function deleteSelected() {
-    if (!selectedId || selected?.locked) return;
+    if (saving || pendingDraft || !selectedId || selected?.locked) return;
     commit((current) => current.filter((item) => item.id !== selectedId));
     setSelectedId("");
   }
 
   function updateSelected(patch: Partial<VisualElement>) {
-    if (!selectedId || selected?.locked) return;
+    if (saving || pendingDraft || !selectedId || selected?.locked) return;
     commit((current) =>
       current.map((item) =>
         item.id === selectedId ? ({ ...item, ...patch } as VisualElement) : item,
@@ -809,6 +810,7 @@ export default function PdfVisualEditor({
   }
 
   function beginDraw(event: ReactPointerEvent<HTMLDivElement>) {
+    if (saving || pendingDraft) return;
     if (drawMode === "select") {
       setSelectedId("");
       return;
@@ -862,7 +864,7 @@ export default function PdfVisualEditor({
     mode: "move" | "resize",
   ) {
     const stage = stageRef.current;
-    if (!stage || !pageInfo) return;
+    if (saving || pendingDraft || !stage || !pageInfo) return;
     event.preventDefault();
     event.stopPropagation();
     setSelectedId(element.id);
@@ -1054,9 +1056,9 @@ export default function PdfVisualEditor({
         </div>
         <div className="pdf-visual-toolbar" role="toolbar" aria-label="أدوات المحرر المرئي">
           <button className="button outline" onClick={() => void closeEditor()} disabled={saving}>إغلاق</button>
-          <button className="button outline" onClick={addText} disabled={saving}>＋ نص</button>
-          <button className="button outline" onClick={() => requestAsset("image")} disabled={saving}>＋ صورة</button>
-          <button className="button outline" onClick={() => requestAsset("signature")} disabled={saving}>＋ توقيع</button>
+          <button className="button outline" onClick={addText} disabled={saving || !!pendingDraft}>＋ نص</button>
+          <button className="button outline" onClick={() => requestAsset("image")} disabled={saving || !!pendingDraft}>＋ صورة</button>
+          <button className="button outline" onClick={() => requestAsset("signature")} disabled={saving || !!pendingDraft}>＋ توقيع</button>
           <button className="button outline" onClick={undo} disabled={!undoStack.length || saving} title="تراجع Ctrl+Z">↶</button>
           <button className="button outline" onClick={redo} disabled={!redoStack.length || saving} title="إعادة Ctrl+Y">↷</button>
           <button className="button outline" onClick={copySelectedToClipboard} disabled={!selectedId || saving}>نسخ</button>
@@ -1125,7 +1127,7 @@ export default function PdfVisualEditor({
               aria-pressed={drawMode === tool}
               title={label}
               onClick={() => { setDrawMode(tool); setDraftShape(null); drawRef.current = null; }}
-              disabled={saving}
+              disabled={saving || !!pendingDraft}
             >
               <span aria-hidden="true">{symbol}</span>
               {label}
