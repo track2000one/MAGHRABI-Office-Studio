@@ -80,7 +80,7 @@ export function validPdfDraft(draft: unknown, key?: string): draft is PdfDraftRe
     data.assets.every(asset => asset && typeof asset.id === "string" &&
       asset.file instanceof Blob && asset.file.size <= 15 * 1024 * 1024) &&
     Number.isInteger(data.page) && (data.page ?? 0) >= 1 &&
-    Number.isFinite(data.zoom) && (data.zoom ?? 0) >= 50 && (data.zoom ?? 0) <= 180;
+    Number.isFinite(data.zoom) && (data.zoom ?? 0) >= 20 && (data.zoom ?? 0) <= 400;
 }
 
 export async function readPdfDraft(id: string): Promise<PdfDraftRecord | null> {
