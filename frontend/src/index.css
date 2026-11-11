@@ -2458,3 +2458,44 @@ textarea::placeholder {
   .pdf-multi-toolbar { align-items: stretch; }
   .pdf-multi-toolbar-actions { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
+
+
+/* Portable project backup review — source + drawings + embedded images */
+.pdf-project-backup-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  border: 1px solid #c8dee1;
+  background: #f7fafb;
+}
+.pdf-project-backup-panel .pdf-draft-library-heading {
+  margin-bottom: 0;
+}
+.pdf-project-import-review {
+  padding: 13px;
+  border-radius: 10px;
+  background: white;
+  border: 1px solid #a8cfd1;
+  display: grid;
+  gap: 9px;
+}
+.pdf-project-import-review > strong {
+  font-size: 14px;
+  color: #184352;
+  overflow-wrap: anywhere;
+}
+.pdf-project-import-review > p {
+  margin: 0;
+  line-height: 1.6;
+}
+.pdf-project-backup-panel .button {
+  white-space: normal;
+  text-align: center;
+}
+.pdf-draft-project-card .pdf-draft-actions {
+  justify-content: flex-end;
+}
+@media (max-width: 680px) {
+  .pdf-draft-project-card .pdf-draft-actions {justify-content: stretch;}
+  .pdf-project-backup-panel .pdf-draft-library-heading {gap: 10px;}
+}
