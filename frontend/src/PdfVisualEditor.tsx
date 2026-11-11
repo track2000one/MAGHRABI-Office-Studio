@@ -595,8 +595,11 @@ export default function PdfVisualEditor({
         target?.isContentEditable;
       if (event.key === "Escape") {
         setDrawMode("select");
+        setPanMode(false);
+        setExpanded(false);
         setDraftShape(null);
         drawRef.current = null;
+        panRef.current = null;
         return;
       }
       if (!typing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
