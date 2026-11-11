@@ -270,6 +270,37 @@ describe("Office Studio workflows", () => {
     });
   });
 
+  it("requires sign-in before paid Nano Banana image generation and autosaves the mode", async () => {
+    const user = await openExample();
+    await user.selectOptions(screen.getByLabelText("محرك التصميم البصري"), "nano_banana");
+    await waitFor(() => expect(
+      JSON.parse(localStorage.getItem("maghrabi-office-projects-v1") || "[]")[0]
+        ?.context?.presentationVisualMode,
+    ).toBe("nano_banana"));
+    await user.click(screen.getByRole("button", { name: "تنزيل PowerPoint" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("سجّل الدخول");
+    expect(vi.mocked(fetch).mock.calls.every(([url]) => !String(url).includes("/ai/exports/pptx"))).toBe(true);
+  });
+
+  it("uses the authenticated AI image export only when explicitly selected", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({ configured: true, authenticated: true }), {status: 200}),
+    ));
+    const user = await openExample();
+    URL.createObjectURL = vi.fn(() => "blob:visual-pptx");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    await user.selectOptions(screen.getByLabelText("محرك التصميم البصري"), "nano_banana");
+    await user.selectOptions(screen.getByLabelText("طابع تصميم PowerPoint"), "corporate");
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("pptx-with-art", {status: 200}));
+    await user.click(screen.getByRole("button", {name: "تنزيل PowerPoint"}));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) =>
+      String(url).includes("/ai/exports/pptx?design_style=corporate") &&
+      new Headers(init?.headers).get("X-Maghrabi-Client") === "studio",
+    )).toBe(true));
+    expect(screen.getByText(/الصور المولدة عناصر صور منفصلة/)).toBeVisible();
+  });
+
   it("exports a selected luxury Word document theme with native editable DOCX endpoint", async () => {
     const user = await openExample();
     URL.createObjectURL = vi.fn(() => "blob:word-theme");

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from io import BytesIO
 import math
 import re
+from PIL import Image
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
@@ -108,6 +109,18 @@ def _new(deck: Presentation, bg: str):
     return slide
 
 
+def _faded_artwork(source: bytes, paper: str) -> bytes:
+    """Reuse one subtle full-bleed backdrop for every content slide."""
+    with Image.open(BytesIO(source)) as picture:
+        image = picture.convert("RGB")
+        color = tuple(int(paper[i:i + 2], 16) for i in (0, 2, 4))
+        backdrop = Image.new("RGB", image.size, color)
+        softened = Image.blend(image, backdrop, .88)
+        result = BytesIO()
+        softened.save(result, "JPEG", quality=79, optimize=True)
+        return result.getvalue()
+
+
 def _short_label(rtl: bool, key: str):
     words = {
         "contents": ("محاور العرض", "CONTENTS"),
@@ -131,8 +144,14 @@ def _foot(slide, theme: Palette, rtl: bool, number: int):
           11, theme.accent, False, bold=True, alignment=PP_ALIGN.RIGHT)
 
 
-def _cover(deck: Presentation, content: Content, theme: Palette, rtl: bool):
+def _cover(deck: Presentation, content: Content, theme: Palette, rtl: bool,
+           visual: bytes | None = None):
     slide = _new(deck, theme.dark)
+    if visual:
+        # Generated artwork is decorative; the cover title remains an editable textbox.
+        slide.shapes.add_picture(BytesIO(visual), 0, 0, Inches(WIDTH), Inches(HEIGHT))
+        # Opaque native panel guarantees contrast for both Arabic and English.
+        _rect(slide, 3.00 if rtl else 0, 0, 10.33 if rtl else 9.60, HEIGHT, theme.dark)
     _rect(slide, 0, 0, WIDTH, .10, theme.accent)
     _rect(slide, .82, .83, 1.20, .045, theme.accent)
     _ring(slide, 0.9 if rtl else 9.9, 1.3, 2.8, theme.accent, 2.2)
@@ -278,17 +297,29 @@ def _card(slide, theme: Palette, rtl: bool, text: str, x: float, y: float,
 
 
 def _content_slide(deck: Presentation, section: Section, section_index: int,
-                   page_index: int, pieces: list[str], theme: Palette, rtl: bool):
+                   page_index: int, pieces: list[str], theme: Palette, rtl: bool,
+                   visual: bytes | None = None,
+                   faded_visual: bytes | None = None):
     slide = _new(deck, theme.paper)
+    if faded_visual:
+        # Soft editorial texture behind native cards and headings on all content slides.
+        slide.shapes.add_picture(BytesIO(faded_visual), 0, 0, Inches(WIDTH), Inches(HEIGHT))
     subtitle = f"{_short_label(rtl, 'chapter')} {section_index:02d}  /  {len(deck.slides):02d}"
     title = section.title + (f" {_short_label(rtl, 'continued')}" if page_index else "")
     _header(slide, title, theme, rtl, subtitle)
     if len(pieces) == 1:
         # Editorial feature: oversized section number + readable copy panel.
         circle_x = .95 if rtl else 10.10
-        _ring(slide, circle_x, 3.12, 2.20, theme.line, 3.0)
-        _text(slide, f"{section_index:02d}", circle_x + .39, 3.66, 1.42, .94,
-              48, theme.accent, False, bold=True, alignment=PP_ALIGN.CENTER)
+        if visual:
+            # 16:9 imagery stays proportional, separate from all editable content.
+            slide.shapes.add_picture(BytesIO(visual), Inches(circle_x),
+                                     Inches(3.11), Inches(2.2), Inches(1.238))
+            _text(slide, f"{section_index:02d}", circle_x + .39, 4.54, 1.42, .94,
+                  39, theme.accent, False, bold=True, alignment=PP_ALIGN.CENTER)
+        else:
+            _ring(slide, circle_x, 3.12, 2.20, theme.line, 3.0)
+            _text(slide, f"{section_index:02d}", circle_x + .39, 3.66, 1.42, .94,
+                  48, theme.accent, False, bold=True, alignment=PP_ALIGN.CENTER)
         panel_x = 3.85 if rtl else .85
         _card(slide, theme, rtl, pieces[0], panel_x, 2.43, 8.51, 3.94, 1)
     elif len(pieces) == 2:
@@ -305,19 +336,23 @@ def _content_slide(deck: Presentation, section: Section, section_index: int,
     _foot(slide, theme, rtl, len(deck.slides))
 
 
-def export_premium_pptx(content: Content, design_style: str = "luxury") -> bytes:
+def export_premium_pptx(content: Content, design_style: str = "luxury",
+                        visual_assets: dict[str, bytes] | None = None) -> bytes:
     if design_style not in STYLE_NAMES:
         raise ValueError("Unsupported PowerPoint design style")
     theme = THEMES[design_style]
     rtl = content.language == "ar"
     deck = Presentation()
     deck.slide_width, deck.slide_height = Inches(WIDTH), Inches(HEIGHT)
-    _cover(deck, content, theme, rtl)
+    _cover(deck, content, theme, rtl, (visual_assets or {}).get("cover"))
+    faded_visual = (_faded_artwork(visual_assets["section"], theme.paper)
+                    if visual_assets and visual_assets.get("section") else None)
     _overview(deck, content, theme, rtl)
     _contents(deck, content, theme, rtl)
     for section_idx, section in enumerate(content.sections, 1):
         for page_idx, group in enumerate(_layout_groups(section)):
-            _content_slide(deck, section, section_idx, page_idx, group, theme, rtl)
+            _content_slide(deck, section, section_idx, page_idx, group, theme, rtl,
+                           (visual_assets or {}).get("section"), faded_visual)
     out = BytesIO()
     deck.save(out)
     return out.getvalue()
