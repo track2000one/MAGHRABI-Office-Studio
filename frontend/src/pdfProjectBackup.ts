@@ -133,7 +133,7 @@ function checkManifest(data: unknown): asserts data is PortableManifest {
   assert(draft && validDigest(draft.id) && typeof draft.title === "string" &&
     draft.title.length <= 180 && Number.isFinite(draft.updatedAt) &&
     Number.isInteger(draft.page) && (draft.page ?? 0) >= 1 &&
-    Number.isFinite(draft.zoom) && (draft.zoom ?? 0) >= 50 && (draft.zoom ?? 0) <= 180 &&
+    Number.isFinite(draft.zoom) && (draft.zoom ?? 0) >= 20 && (draft.zoom ?? 0) <= 400 &&
     Array.isArray(draft.elements), "بيانات مشروع PDF غير مكتملة.");
   assert(Number.isFinite(manifest.createdAt), "تاريخ النسخ الاحتياطي غير صالح.");
   assert(validBinary(manifest.source, 30 * 1024 * 1024) &&
