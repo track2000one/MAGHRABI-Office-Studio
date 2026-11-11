@@ -3,9 +3,10 @@ import { api } from "./api";
 import PdfVisualEditor from "./PdfVisualEditor";
 import PdfPageManager from "./PdfPageManager";
 import {
-  listPdfDrafts, readPdfDraft, removePdfDraft, pdfDraftKey,
-  type PdfDraftSummary,
+  listPdfDrafts, readPdfDraft, removePdfDraft, writePdfDraft, pdfDraftKey,
+  type PdfDraftRecord, type PdfDraftSummary,
 } from "./pdfDraftStore";
+import {createPortablePdfProject, readPortablePdfProject, portableProjectFilename, PROJECT_BACKUP_EXTENSION, MAX_PORTABLE_PROJECT_BYTES} from "./pdfProjectBackup";
 
 type PdfPageInfo = {
   page: number;
@@ -61,6 +62,7 @@ export default function PdfStudio({
 }) {
   const input = useRef<HTMLInputElement>(null);
   const mergeInput = useRef<HTMLInputElement>(null);
+  const backupInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const visualStageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<null | { mode: "move" | "resize"; startClientX: number; startClientY: number; startX: number; startY: number; startWidth: number; startHeight: number; stageWidth: number; stageHeight: number }>(null);
@@ -110,6 +112,8 @@ export default function PdfStudio({
   const [savedPdfDrafts, setSavedPdfDrafts] = useState<PdfDraftSummary[]>([]);
   const [pdfDraftsError, setPdfDraftsError] = useState("");
   const [restoreDraftId, setRestoreDraftId] = useState<string | null>(null);
+  const [pendingBackupImport, setPendingBackupImport] = useState<PdfDraftRecord | null>(null);
+  const [backupImportExisting, setBackupImportExisting] = useState(false);
 
   useEffect(() => { onUnsavedChange?.(pdfUnsaved); }, [pdfUnsaved, onUnsavedChange]);
   useEffect(() => () => { onUnsavedChange?.(false); }, [onUnsavedChange]);
@@ -253,6 +257,85 @@ export default function PdfStudio({
       setNotice("حُذف المشروع المحدد فقط، وبقيت بقية المشاريع محفوظة.");
     } catch (error) {
       setPdfDraftsError(error instanceof Error ? error.message : "تعذّر حذف المشروع.");
+    }
+  }
+
+  async function exportSavedPdfProject(id: string) {
+    setBusy("جارٍ إعداد نسخة احتياطية كاملة للمشروع…");
+    setError("");
+    try {
+      const project = await readPdfDraft(id);
+      if (!project) throw new Error("هذا المشروع لم يعد موجودًا في المتصفح.");
+      const archive = await createPortablePdfProject(project);
+      downloadBlob(archive, portableProjectFilename(project.title));
+      setNotice("تم تجهيز نسخة المشروع: ملف PDF الأصلي والرسومات والصور والتواقيع. احتفظ بها في مكان آمن.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "تعذّر تصدير النسخة الاحتياطية.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function exportCurrentPdfProject() {
+    if (!file) return;
+    if (pdfUnsaved) {
+      setError("توجد تعديلات لم يكتمل حفظها. اضغط «حفظ المشروع الآن» في المحرر أولًا.");
+      return;
+    }
+    try {
+      const id = await pdfDraftKey(file);
+      await exportSavedPdfProject(id);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "تعذّر إنشاء النسخة الاحتياطية.");
+    }
+  }
+
+  async function inspectBackupFile(fileToImport?: File) {
+    if (!fileToImport) return;
+    setError("");
+    setNotice("");
+    setPendingBackupImport(null);
+    setBackupImportExisting(false);
+    if (!fileToImport.name.toLowerCase().endsWith(PROJECT_BACKUP_EXTENSION)) {
+      setError("اختر ملف مشروع محفوظًا بامتداد .mopdf وليس ملف PDF نهائيًا.");
+      return;
+    }
+    if (fileToImport.size > MAX_PORTABLE_PROJECT_BYTES) {
+      setError("ملف النسخة الاحتياطية يتجاوز الحد المسموح 155 ميجابايت.");
+      return;
+    }
+    setBusy("جارٍ فحص النسخة الاحتياطية والتحقق من الملفات المرفقة…");
+    try {
+      const imported = await readPortablePdfProject(fileToImport);
+      const existing = await readPdfDraft(imported.id);
+      setPendingBackupImport(imported);
+      setBackupImportExisting(!!existing);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "ملف النسخة الاحتياطية غير صالح.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function approveBackupImport() {
+    const incoming = pendingBackupImport;
+    if (!incoming) return;
+    if (backupImportExisting && !window.confirm(
+      "هناك مشروع سابق لهذا الملف على الجهاز. سيستبدل الاستيراد مسودته ورسوماته القديمة. يُنصح بتنزيل نسخة احتياطية منه أولًا. هل تؤكد الاستبدال؟"
+    )) return;
+    setBusy("جارٍ استيراد مشروع PDF إلى مكتبة المشاريع…");
+    setError("");
+    try {
+      await writePdfDraft(incoming);
+      const updated = await listPdfDrafts();
+      setSavedPdfDrafts(updated);
+      setPendingBackupImport(null);
+      setBackupImportExisting(false);
+      setNotice("تم استيراد المشروع كاملًا بنجاح. يمكنك الضغط على «فتح وتحرير» لمتابعة العمل.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "تعذّر استيراد المشروع.");
+    } finally {
+      setBusy("");
     }
   }
 
@@ -558,6 +641,41 @@ export default function PdfStudio({
             />
           </section>
 
+          <section className="panel pdf-project-backup-panel">
+            <div className="pdf-draft-library-heading">
+              <div>
+                <h3>استيراد نسخة احتياطية لمشروع PDF</h3>
+                <p className="muted small">استعد مشروعك على جهاز آخر مع الرسومات والصور والتواقيع القابلة للتحرير، دون رفع النسخة الاحتياطية إلى الخادم.</p>
+              </div>
+              <button type="button" className="button outline" disabled={!!busy}
+                onClick={() => backupInput.current?.click()}>اختيار ملف .mopdf</button>
+            </div>
+            <input ref={backupInput} type="file" accept=".mopdf,application/octet-stream" hidden
+              onChange={(event) => {
+                void inspectBackupFile(event.target.files?.[0]);
+                event.target.value = "";
+              }} />
+            {pendingBackupImport && (
+              <div className="pdf-project-import-review" role="region" aria-label="معاينة استيراد مشروع PDF">
+                <strong>{pendingBackupImport.title}</strong>
+                <p className="muted small">
+                  {pendingBackupImport.elements.length} عنصرًا · {pendingBackupImport.assets.length} صورة أو توقيع ·
+                  {(pendingBackupImport.source.size / 1024 / 1024).toFixed(2)} MB ملف PDF أصلي
+                </p>
+                {backupImportExisting && <p className="pdf-draft-error">هذا المشروع موجود مسبقًا. الاستيراد سيستبدل بياناته فقط بعد موافقتك، ولن يحذف المشاريع الأخرى.</p>}
+                <div className="pdf-draft-actions">
+                  <button type="button" className="button primary" disabled={!!busy}
+                    onClick={() => void approveBackupImport()}>
+                    {backupImportExisting ? "تأكيد استبدال المشروع" : "اعتماد الاستيراد"}
+                  </button>
+                  <button type="button" className="button outline"
+                    onClick={() => {setPendingBackupImport(null);setBackupImportExisting(false);}}>إلغاء</button>
+                </div>
+              </div>
+            )}
+            <p className="muted small">النسخة الاحتياطية تحتوي المستند الأصلي وجميع العناصر. احفظ الملف الناتج في موقع آمن؛ فهو غير مشفّر.</p>
+          </section>
+
           <section className="panel pdf-draft-library">
             <div className="pdf-draft-library-heading">
               <div>
@@ -580,6 +698,8 @@ export default function PdfStudio({
                     <div className="pdf-draft-actions">
                       <button type="button" className="button primary" disabled={!!busy}
                         onClick={() => void openSavedPdfProject(project.id)}>فتح وتحرير</button>
+                      <button type="button" className="button outline" disabled={!!busy}
+                        onClick={() => void exportSavedPdfProject(project.id)}>تنزيل نسخة احتياطية</button>
                       <button type="button" className="button outline" disabled={!!busy}
                         onClick={() => void deleteSavedPdfProject(project.id)}>حذف</button>
                     </div>
@@ -649,6 +769,10 @@ export default function PdfStudio({
                   setPdfUnsaved(false);
                   setNotice("");
                 }}>مكتبة مشاريع PDF</button>
+              <button type="button" className="button outline" disabled={!!busy || pdfUnsaved}
+                onClick={() => void exportCurrentPdfProject()}>
+                تنزيل نسخة احتياطية للمشروع
+              </button>
               <button
                 className="button outline"
                 disabled={!!busy}
