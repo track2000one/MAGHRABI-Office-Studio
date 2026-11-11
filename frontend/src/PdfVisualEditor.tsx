@@ -9,6 +9,7 @@ import { api } from "./api";
 import {loadPdfThumbnails, PDF_THUMBNAIL_BATCH} from "./pdfThumbnails";
 import {PdfShapeGraphic, PDF_SHAPE_TOOLS, shapeGeometry, type PdfDrawingTool, type PdfShapeKind, type ShapePoint} from "./pdfShapes";
 import {alignSelection, snapSelectionMove, rotatedBounds, type Alignment} from "./pdfTransform";
+import {pdfCanvasWidth, pdfNextZoom, pdfVisibleZoom, clampPdfZoom, type PdfViewMode} from "./pdfViewerZoom";
 import {
   pdfDraftKey, readPdfDraft, removePdfDraft, writePdfDraft,
   type PdfDraftRecord,
@@ -135,6 +136,8 @@ export default function PdfVisualEditor({
   const assetInput = useRef<HTMLInputElement>(null);
   const assetMode = useRef<"image" | "signature">("image");
   const stageRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const panRef = useRef<null | {x:number; y:number; scrollLeft:number; scrollTop:number}>(null);
   const idCounter = useRef(0);
   const assetsRef = useRef<Record<string, AssetEntry>>({});
   const pageUrlRef = useRef("");
@@ -180,6 +183,12 @@ export default function PdfVisualEditor({
   const [undoStack, setUndoStack] = useState<VisualElement[][]>([]);
   const [redoStack, setRedoStack] = useState<VisualElement[][]>([]);
   const [zoom, setZoom] = useState(100);
+  const [viewMode, setViewMode] = useState<PdfViewMode>("fit-width");
+  const [viewportSize, setViewportSize] = useState({width:760, height:760});
+  const [expanded, setExpanded] = useState(false);
+  const [showThumbnails, setShowThumbnails] = useState(true);
+  const [showInspector, setShowInspector] = useState(true);
+  const [panMode, setPanMode] = useState(false);
   const [drawMode, setDrawMode] = useState<PdfDrawingTool>("select");
   const [draftShape, setDraftShape] = useState<ShapeElement | null>(null);
   const [loadingPage, setLoadingPage] = useState(false);
@@ -216,6 +225,77 @@ export default function PdfVisualEditor({
   );
 
   useEffect(() => {
+    if (!active) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const measure = () => {
+      const width = viewport.clientWidth;
+      const height = viewport.clientHeight;
+      if (width > 0 && height > 0) {
+        setViewportSize(previous =>
+          previous.width === width && previous.height === height
+            ? previous : {width, height}
+        );
+      }
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(viewport);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [active, expanded, showThumbnails, showInspector]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {document.body.style.overflow = oldOverflow;};
+  }, [expanded]);
+
+  const canvasWidth = pdfCanvasWidth(
+    viewMode, zoom, viewportSize.width, viewportSize.height,
+    pageInfo.width_mm, pageInfo.height_mm,
+  );
+  const visibleZoom = pdfVisibleZoom(canvasWidth);
+
+  function changeZoom(value: number) {
+    setZoom(clampPdfZoom(value));
+    setViewMode("custom");
+  }
+  function zoomBy(delta: number) {
+    changeZoom(pdfNextZoom(canvasWidth, delta));
+  }
+  function beginPan(event: ReactPointerEvent<HTMLDivElement>) {
+    const viewport = viewportRef.current;
+    if (!panMode || !viewport || event.button !== 0) return false;
+    panRef.current = {
+      x: event.clientX, y: event.clientY,
+      scrollLeft: viewport.scrollLeft, scrollTop: viewport.scrollTop,
+    };
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    return true;
+  }
+  function movePan(event: ReactPointerEvent<HTMLDivElement>) {
+    const origin = panRef.current;
+    const viewport = viewportRef.current;
+    if (!origin || !viewport) return false;
+    viewport.scrollLeft = origin.scrollLeft - (event.clientX - origin.x);
+    viewport.scrollTop = origin.scrollTop - (event.clientY - origin.y);
+    return true;
+  }
+  function endPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!panRef.current) return false;
+    panRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    return true;
+  }
+
+  useEffect(() => {
     assetsRef.current = assets;
   }, [assets]);
 
@@ -234,6 +314,8 @@ export default function PdfVisualEditor({
     setUndoStack([]);
     setRedoStack([]);
     setZoom(100);
+    setViewMode("fit-width");
+    setPanMode(false);
     setDrawMode("select");
     setDraftShape(null);
     drawRef.current = null;
@@ -297,6 +379,7 @@ export default function PdfVisualEditor({
     selectOnly("");
     setPage(Math.min(Math.max(draft.page, 1), info.pages));
     setZoom(draft.zoom);
+    setViewMode(draft.zoom === 100 ? "fit-width" : "custom");
     setActive(true);
     setPendingDraft(null);
     setDraftEnabled(true);
