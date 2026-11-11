@@ -1012,7 +1012,7 @@ export default function PdfVisualEditor({
     mode: "move" | "resize",
   ) {
     const stage = stageRef.current;
-    if (saving || pendingDraft || drawMode !== "select" || !stage || !pageInfo) return;
+    if (saving || pendingDraft || panMode || drawMode !== "select" || !stage || !pageInfo) return;
     event.preventDefault();
     event.stopPropagation();
     const groupIds = element.groupId
@@ -1107,6 +1107,8 @@ export default function PdfVisualEditor({
       if (!saved && !window.confirm("التعديلات غير محفوظة كمسودة. هل تريد إغلاق المحرر رغم ذلك؟"))
         return;
     }
+    setExpanded(false);
+    setPanMode(false);
     setActive(false);
   }
 
@@ -1226,7 +1228,7 @@ export default function PdfVisualEditor({
   }
 
   return (
-    <section className="panel pdf-visual-editor">
+    <section className={`panel pdf-visual-editor ${expanded ? "pdf-editor-expanded" : ""}`}>
       <div className="pdf-visual-editor-head">
         <div>
           <span className="welcome-label">VISUAL PDF EDITOR</span>
@@ -1236,6 +1238,10 @@ export default function PdfVisualEditor({
           </p>
         </div>
         <div className="pdf-visual-toolbar" role="toolbar" aria-label="أدوات المحرر المرئي">
+          <button type="button" className="button outline" onClick={() => setExpanded(v => !v)}
+            aria-pressed={expanded} aria-label={expanded ? "الخروج من العرض الموسع" : "توسيع محرر PDF"}>
+            {expanded ? "تصغير النافذة" : "عرض موسّع ⛶"}
+          </button>
           <button className="button outline" onClick={() => void closeEditor()} disabled={saving}>إغلاق</button>
           <button className="button outline" onClick={addText} disabled={saving || !!pendingDraft}>＋ نص</button>
           <button className="button outline" onClick={() => requestAsset("image")} disabled={saving || !!pendingDraft}>＋ صورة</button>
@@ -1307,7 +1313,7 @@ export default function PdfVisualEditor({
               className={drawMode === tool ? "pdf-shape-tool active" : "pdf-shape-tool"}
               aria-pressed={drawMode === tool}
               title={label}
-              onClick={() => { setDrawMode(tool); setDraftShape(null); drawRef.current = null; }}
+              onClick={() => { setDrawMode(tool); setPanMode(false); setDraftShape(null); drawRef.current = null; }}
               disabled={saving || !!pendingDraft}
             >
               <span aria-hidden="true">{symbol}</span>
@@ -1332,8 +1338,22 @@ export default function PdfVisualEditor({
         </div>
       </div>
 
-      <div className="pdf-visual-editor-layout">
-        <aside className="pdf-thumbnails" aria-label="صفحات PDF">
+      <div className="pdf-view-options" role="toolbar" aria-label="إعدادات عرض الصفحة">
+        <button type="button" className="button outline" onClick={() => setShowThumbnails(v => !v)}
+          aria-pressed={showThumbnails}>{showThumbnails ? "إخفاء الصفحات" : "إظهار الصفحات"}</button>
+        <button type="button" className="button outline" onClick={() => setShowInspector(v => !v)}
+          aria-pressed={showInspector}>{showInspector ? "إخفاء الخصائص" : "إظهار الخصائص"}</button>
+        <button type="button" className={panMode ? "button primary" : "button outline"}
+          aria-pressed={panMode} onClick={() => {
+            setPanMode(value => !value);
+            setDrawMode("select");
+            setDraftShape(null);
+            drawRef.current = null;
+          }}>✋ تحريك الصفحة</button>
+        <span className="muted small">عرض تلقائي، أو تكبير يدوي مع تمرير الصفحة داخل الإطار</span>
+      </div>
+      <div className={`pdf-visual-editor-layout ${!showThumbnails ? "hide-thumbnails" : ""} ${!showInspector ? "hide-inspector" : ""}`}>
+        <aside className="pdf-thumbnails" aria-label="صفحات PDF" hidden={!showThumbnails}>
           {Array.from({ length: info.pages }, (_, index) => index + 1).map((pageNumber) => (
             <button
               key={pageNumber}
@@ -1356,27 +1376,36 @@ export default function PdfVisualEditor({
 
         <div className="pdf-canvas-column">
           <div className="pdf-canvas-toolbar">
-            <strong>صفحة {page}</strong>
-            <div>
-              <button className="text-button" onClick={() => setZoom((value) => Math.max(50, value - 10))}>−</button>
-              <span>{zoom}%</span>
-              <button className="text-button" onClick={() => setZoom((value) => Math.min(180, value + 10))}>＋</button>
-              <button className="text-button" onClick={() => setZoom(100)}>100%</button>
+            <strong>صفحة {page} من {info.pages}</strong>
+            <div className="pdf-zoom-tools" role="toolbar" aria-label="تكبير وتصغير صفحة PDF">
+              <button type="button" className="text-button" aria-label="تصغير الصفحة"
+                onClick={() => zoomBy(-10)} disabled={visibleZoom <= 20}>−</button>
+              <input type="range" min="20" max="400" step="5"
+                aria-label="مستوى تكبير PDF" value={clampPdfZoom(visibleZoom)}
+                onChange={event => changeZoom(Number(event.target.value))} />
+              <button type="button" className="text-button" aria-label="تكبير الصفحة"
+                onClick={() => zoomBy(10)} disabled={visibleZoom >= 400}>＋</button>
+              <span className="pdf-zoom-readout" aria-live="polite">{visibleZoom}%</span>
+              <button type="button" className={viewMode === "fit-width" ? "text-button active" : "text-button"}
+                aria-pressed={viewMode === "fit-width"} onClick={() => setViewMode("fit-width")}>احتواء العرض</button>
+              <button type="button" className={viewMode === "fit-page" ? "text-button active" : "text-button"}
+                aria-pressed={viewMode === "fit-page"} onClick={() => setViewMode("fit-page")}>احتواء الصفحة</button>
+              <button type="button" className="text-button" onClick={() => changeZoom(100)}>100%</button>
             </div>
           </div>
-          <div className="pdf-canvas-scroll">
+          <div className="pdf-canvas-scroll" ref={viewportRef} data-testid="pdf-canvas-viewport">
             <div
               ref={stageRef}
-              className={drawMode === "select" ? "pdf-editor-stage" : "pdf-editor-stage drawing"}
+              className={panMode ? "pdf-editor-stage panning" : drawMode === "select" ? "pdf-editor-stage" : "pdf-editor-stage drawing"}
               data-testid="pdf-editor-stage"
               style={{
-                width: `${Math.round(760 * (zoom / 100))}px`,
+                width: `${canvasWidth}px`,
                 aspectRatio: `${pageInfo.width_mm} / ${pageInfo.height_mm}`,
               }}
-              onPointerDown={beginDraw}
-              onPointerMove={moveDraw}
-              onPointerUp={event => endDraw(event)}
-              onPointerCancel={event => endDraw(event, true)}
+              onPointerDown={event => { if (!beginPan(event)) beginDraw(event); }}
+              onPointerMove={event => { if (!movePan(event)) moveDraw(event); }}
+              onPointerUp={event => { if (!endPan(event)) endDraw(event); }}
+              onPointerCancel={event => { if (!endPan(event)) endDraw(event, true); }}
             >
               {loadingPage && <div className="pdf-visual-loading">جارٍ تجهيز الصفحة…</div>}
               {pageUrl && <img className="pdf-editor-page-image" src={pageUrl} alt={`صفحة PDF رقم ${page}`} />}
@@ -1426,7 +1455,7 @@ export default function PdfVisualEditor({
                         className="pdf-canvas-text"
                         dir={element.rtl ? "rtl" : "ltr"}
                         style={{
-                          fontSize: `${Math.max(8, element.fontSizePt * 1.25 * (zoom / 100))}px`,
+                          fontSize: `${Math.max(3, element.fontSizePt * 1.25 * (canvasWidth / 760))}px`,
                           color: element.color,
                           fontWeight: element.bold ? 700 : 400,
                           textAlign: element.align,
@@ -1462,7 +1491,7 @@ export default function PdfVisualEditor({
           </div>
         </div>
 
-        <aside className="pdf-element-inspector">
+        <aside className="pdf-element-inspector" hidden={!showInspector}>
           <h4>{selectedIds.length > 1 ? "خصائص العناصر المحددة" : "خصائص العنصر"}</h4>
           {selectedIds.length > 1 && (
             <p className="muted small">{selectedIds.length} عناصر محددة. المحاذاة تطبّق على المجموعة بأكملها، وتبقى خصائص العنصر الأخير منفصلة.</p>
