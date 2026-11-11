@@ -1191,7 +1191,7 @@ it("fits PDF in its viewport and allows zoom, fullscreen and hiding editor panel
   expect(Number.parseInt(stage.style.width, 10)).toBeLessThanOrEqual(Number.parseInt(firstWidth, 10));
 
   await user.click(screen.getByRole("button", {name:"إخفاء الصفحات"}));
-  expect(screen.getByRole("complementary", {name:"صفحات PDF"})).not.toBeVisible();
+  expect(container.querySelector(".pdf-thumbnails")).toHaveAttribute("hidden");
   await user.click(screen.getByRole("button", {name:"إخفاء الخصائص"}));
   expect(container.querySelector(".pdf-element-inspector")).toHaveAttribute("hidden");
   await user.click(screen.getByRole("button", {name:"توسيع محرر PDF"}));
