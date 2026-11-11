@@ -1151,3 +1151,53 @@ it("provides professional object tools for visual PDF elements", async () => {
   await user.click(screen.getByRole("button", { name: "يمين" }));
   expect(screen.getByLabelText("X (مم)")).toHaveValue(155);
 });
+
+
+it("fits PDF in its viewport and allows zoom, fullscreen and hiding editor panels", async () => {
+  URL.createObjectURL = vi.fn(() => "blob:pdf-viewer-test");
+  URL.revokeObjectURL = vi.fn();
+  vi.mocked(fetch).mockImplementation(async url => {
+    if (String(url).endsWith("/pdf/analyze")) {
+      return new Response(JSON.stringify({
+        filename: "plan.pdf", size_bytes: 800, pages: 1, text_chars: 0,
+        metadata: {},
+        page_sizes: [{page: 1, width_mm: 210, height_mm: 297,
+          orientation:"portrait",rotation:0,text_chars:0}],
+        supported_sizes: ["A4"],
+      }), {status:200});
+    }
+    if (String(url).endsWith("/pdf/render-page"))
+      return new Response(new Blob(["png"], {type:"image/png"}), {status:200});
+    return new Response(JSON.stringify({configured:false}), {status:200});
+  });
+
+  const user = userEvent.setup();
+  const {container} = render(<App />);
+  await user.click(screen.getByRole("button", {name:/^تحرير PDF$/}));
+  const uploader = container.querySelector('input[type="file"][accept*=".pdf"]:not([multiple])') as HTMLInputElement;
+  await user.upload(uploader, new File(["%PDF-1.4"], "plan.pdf", {type:"application/pdf"}));
+  await screen.findByText(/1 صفحة/);
+  await user.click(screen.getByRole("button", {name:"فتح المحرر المرئي"}));
+
+  const stage = screen.getByTestId("pdf-editor-stage");
+  expect(screen.getByRole("button", {name:"احتواء العرض"})).toHaveAttribute("aria-pressed", "true");
+  const firstWidth = stage.style.width;
+  await user.click(screen.getByRole("button", {name:"تكبير الصفحة"}));
+  expect(stage.style.width).not.toBe(firstWidth);
+  await user.click(screen.getByRole("button", {name:"احتواء العرض"}));
+  expect(stage.style.width).toBe(firstWidth);
+  await user.click(screen.getByRole("button", {name:"احتواء الصفحة"}));
+  expect(screen.getByRole("button", {name:"احتواء الصفحة"})).toHaveAttribute("aria-pressed","true");
+  expect(Number.parseInt(stage.style.width, 10)).toBeLessThanOrEqual(Number.parseInt(firstWidth, 10));
+
+  await user.click(screen.getByRole("button", {name:"إخفاء الصفحات"}));
+  expect(screen.getByRole("complementary", {name:"صفحات PDF"})).not.toBeVisible();
+  await user.click(screen.getByRole("button", {name:"إخفاء الخصائص"}));
+  expect(container.querySelector(".pdf-element-inspector")).toHaveAttribute("hidden");
+  await user.click(screen.getByRole("button", {name:"توسيع محرر PDF"}));
+  expect(container.querySelector(".pdf-visual-editor")).toHaveClass("pdf-editor-expanded");
+  await user.click(screen.getByRole("button", {name:"الخروج من العرض الموسع"}));
+  expect(container.querySelector(".pdf-visual-editor")).not.toHaveClass("pdf-editor-expanded");
+  await user.click(screen.getByRole("button", {name:/تحريك الصفحة/}));
+  expect(screen.getByRole("button", {name:/تحريك الصفحة/})).toHaveAttribute("aria-pressed","true");
+});
